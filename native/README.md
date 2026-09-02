@@ -7,9 +7,9 @@ This directory contains the compiled Windows application that replaces the Power
 - `DisplayEngine` wraps Windows DisplayConfig APIs and identifies monitors by EDID device path.
 - `DdcEngine` uses the native Windows monitor configuration API (`Dxva2.dll`) to discover DDC/CI displays, parse their MCCS capability strings, read VCP `0x60`, and switch only input values explicitly advertised by the monitor.
 - `AppController` owns the notification-area icon, menus, global hotkeys and application lifetime.
-- `SettingsForm` manages the TV selection, hotkeys and arbitrary display profiles. Each profile may include physical monitor input assignments.
+- `SettingsForm` manages arbitrary display profiles and two assignable quick-action hotkeys. Each profile may include physical monitor input assignments.
 - Profile changes capture the previous active topology and affected monitor inputs, then automatically roll both back after 15 seconds unless confirmed.
-- Configuration uses `monitor-hotkeys.json` beside the executable. The app imports the prototype's `monitor-wheel.json` on first launch.
+- Configuration is stored under `%LocalAppData%\DisplayCue`. The app imports earlier DisplayCue and prototype settings on first launch.
 
 ## Local legacy build
 

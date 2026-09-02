@@ -4,14 +4,14 @@ DisplayCue is a lightweight Windows tray application for switching display layou
 
 ## Features
 
-- Switch between **TV only**, **all displays**, or any number of named display profiles.
-- Configure global hotkeys for the two most-used actions.
+- Save any number of named display profiles, from one display to an entire desk.
+- Assign any two profiles—or **all displays**—to configurable global hotkeys.
 - Identify active monitors with large numbered overlays.
 - Control HDMI and DisplayPort inputs on monitors that advertise DDC/CI input-source support.
 - Restore the previous Windows topology and monitor inputs automatically unless a new profile is confirmed within 15 seconds.
 - Run entirely on the local computer without accounts, analytics, telemetry, or cloud services.
 
-DisplayCue supports a variable number of displays. A profile may contain one monitor, one TV, several monitors, or every connected display.
+DisplayCue supports a variable number and type of displays. A profile may contain one screen, several monitors, a projector, a TV, or every connected display.
 
 ## Install
 

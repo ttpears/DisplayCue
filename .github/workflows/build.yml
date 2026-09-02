@@ -37,5 +37,3 @@ jobs:
         with:
           files: |
             artifacts/DisplayCue-win-x64.zip
-            artifacts/store/DisplayCue_*.msix
-            artifacts/store/DisplayCue_*.msixupload

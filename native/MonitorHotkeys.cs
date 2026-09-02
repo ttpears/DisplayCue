@@ -14,15 +14,21 @@ namespace MonitorHotkeys
     [DataContract]
     public sealed class AppConfig
     {
+        // Legacy fields are retained only so existing 1.x settings can be migrated.
         [DataMember] public string TvMatch = "TV";
         [DataMember] public string TvOnlyHotkey = "Ctrl+Shift+F11";
         [DataMember] public string AllHotkey = "Ctrl+Shift+F12";
+        [DataMember] public string QuickOneProfileId = "";
+        [DataMember] public string QuickTwoProfileId = "$all";
+        [DataMember] public string QuickOneHotkey = "Ctrl+Shift+F11";
+        [DataMember] public string QuickTwoHotkey = "Ctrl+Shift+F12";
         [DataMember] public List<DisplayProfile> Profiles = new List<DisplayProfile>();
     }
 
     [DataContract]
     public sealed class DisplayProfile
     {
+        [DataMember] public string Id = Guid.NewGuid().ToString("N");
         [DataMember] public string Name = "New profile";
         [DataMember] public List<string> Devices = new List<string>();
         [DataMember] public List<MonitorInputAssignment> MonitorInputs = new List<MonitorInputAssignment>();
@@ -64,7 +70,11 @@ namespace MonitorHotkeys
                     {
                         AppConfig c = (AppConfig)new DataContractJsonSerializer(typeof(AppConfig)).ReadObject(s);
                         if (c.Profiles == null) c.Profiles = new List<DisplayProfile>();
-                        foreach (DisplayProfile p in c.Profiles) if (p.MonitorInputs == null) p.MonitorInputs = new List<MonitorInputAssignment>();
+                        foreach (DisplayProfile p in c.Profiles) { if (String.IsNullOrWhiteSpace(p.Id)) p.Id = Guid.NewGuid().ToString("N"); if (p.MonitorInputs == null) p.MonitorInputs = new List<MonitorInputAssignment>(); }
+                        if (String.IsNullOrWhiteSpace(c.QuickOneHotkey) || (c.QuickOneHotkey == "Ctrl+Shift+F11" && !String.IsNullOrWhiteSpace(c.TvOnlyHotkey) && c.TvOnlyHotkey != "Ctrl+Shift+F11")) c.QuickOneHotkey = String.IsNullOrWhiteSpace(c.TvOnlyHotkey) ? "Ctrl+Shift+F11" : c.TvOnlyHotkey;
+                        if (String.IsNullOrWhiteSpace(c.QuickTwoHotkey) || (c.QuickTwoHotkey == "Ctrl+Shift+F12" && !String.IsNullOrWhiteSpace(c.AllHotkey) && c.AllHotkey != "Ctrl+Shift+F12")) c.QuickTwoHotkey = String.IsNullOrWhiteSpace(c.AllHotkey) ? "Ctrl+Shift+F12" : c.AllHotkey;
+                        if (c.QuickOneProfileId == null) c.QuickOneProfileId = "";
+                        if (String.IsNullOrWhiteSpace(c.QuickTwoProfileId)) c.QuickTwoProfileId = "$all";
                         return c;
                     }
             }
@@ -258,8 +268,13 @@ namespace MonitorHotkeys
 
     public sealed class SettingsForm : Form
     {
+        sealed class QuickActionOption
+        {
+            public string Id, Name;
+            public override string ToString() { return Name; }
+        }
         readonly AppController owner; readonly AppConfig config; readonly List<MonitorInfo> monitors;
-        ComboBox tv; TextBox tvHotkey, allHotkey; ListBox profiles; CheckedListBox checks; TextBox profileName; Panel content; Button generalNav, profilesNav;
+        ComboBox quickOne, quickTwo; TextBox quickOneHotkey, quickTwoHotkey; ListBox profiles; CheckedListBox checks; TextBox profileName; Panel content; Button generalNav, profilesNav;
         List<MonitorInputAssignment> profileInputs = new List<MonitorInputAssignment>(); Button inputButton;
         public SettingsForm(AppController owner)
         {
@@ -284,20 +299,30 @@ namespace MonitorHotkeys
             Label title = Theme.Label("Quick switching", 21, true); title.Location = new Point(34, 28); page.Controls.Add(title);
             Label help = Theme.Label("Set up the two display changes you use most.", 10, false); help.ForeColor = Theme.Muted; help.Location = new Point(36, 67); page.Controls.Add(help);
             Button identify = Theme.Button("Identify displays", false); identify.SetBounds(518, 29, 148, 40); identify.Click += delegate { owner.Identify(); }; page.Controls.Add(identify);
-            Panel displayCard = Theme.Card(34, 106, 632, 136); page.Controls.Add(displayCard);
-            displayCard.Controls.Add(At(Theme.Label("TV-only display", 11, true), 20, 18));
-            Label displayHelp = Theme.Label("This is the one screen that stays on when you choose TV only.", 9, false); displayHelp.ForeColor = Theme.Muted; displayHelp.Location = new Point(20, 45); displayCard.Controls.Add(displayHelp);
-            tv = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, BackColor = Theme.Input, ForeColor = Theme.Text, Width = 592, Location = new Point(20, 79), Font = new Font("Segoe UI", 10.5f), FlatStyle = FlatStyle.Flat };
-            for (int i = 0; i < monitors.Count; i++) tv.Items.Add((i + 1) + ". " + monitors[i].Name + (monitors[i].Active ? "  ·  On" : "  ·  Off"));
-            int selected = monitors.FindIndex(x => x.Name == config.TvMatch); tv.SelectedIndex = selected >= 0 ? selected : (tv.Items.Count > 0 ? 0 : -1); displayCard.Controls.Add(tv);
-            Panel hotkeyCard = Theme.Card(34, 258, 632, 204); page.Controls.Add(hotkeyCard);
-            hotkeyCard.Controls.Add(At(Theme.Label("Keyboard shortcuts", 11, true), 20, 18));
-            Label hotkeyHelp = Theme.Label("Click a field, then press a key combination. Leave it blank to disable it.", 9, false); hotkeyHelp.ForeColor = Theme.Muted; hotkeyHelp.Location = new Point(20, 45); hotkeyCard.Controls.Add(hotkeyHelp);
-            hotkeyCard.Controls.Add(At(Theme.Label("TV only", 9, true), 20, 82)); tvHotkey = HotkeyBox(config.TvOnlyHotkey, 20, 108); tvHotkey.Width = 280; hotkeyCard.Controls.Add(tvHotkey);
-            hotkeyCard.Controls.Add(At(Theme.Label("All displays", 9, true), 332, 82)); allHotkey = HotkeyBox(config.AllHotkey, 332, 108); allHotkey.Width = 280; hotkeyCard.Controls.Add(allHotkey);
-            Label note = Theme.Label("More display combinations are available from the tray menu.", 8.5f, false); note.ForeColor = Theme.Muted; note.Location = new Point(20, 157); hotkeyCard.Controls.Add(note);
+            Panel actionCard = Theme.Card(34, 106, 632, 356); page.Controls.Add(actionCard);
+            actionCard.Controls.Add(At(Theme.Label("Quick actions", 11, true), 20, 18));
+            Label actionHelp = Theme.Label("Assign any two profiles to global shortcuts. Leave a shortcut blank to disable it.", 9, false); actionHelp.ForeColor = Theme.Muted; actionHelp.Location = new Point(20, 45); actionCard.Controls.Add(actionHelp);
+            actionCard.Controls.Add(At(Theme.Label("Quick action 1", 9, true), 20, 84));
+            quickOne = QuickActionBox(config.QuickOneProfileId, 20, 110); actionCard.Controls.Add(quickOne);
+            actionCard.Controls.Add(At(Theme.Label("Keyboard shortcut", 8.5f, false), 332, 84));
+            quickOneHotkey = HotkeyBox(config.QuickOneHotkey, 332, 110); quickOneHotkey.Width = 280; actionCard.Controls.Add(quickOneHotkey);
+            actionCard.Controls.Add(At(Theme.Label("Quick action 2", 9, true), 20, 182));
+            quickTwo = QuickActionBox(config.QuickTwoProfileId, 20, 208); actionCard.Controls.Add(quickTwo);
+            actionCard.Controls.Add(At(Theme.Label("Keyboard shortcut", 8.5f, false), 332, 182));
+            quickTwoHotkey = HotkeyBox(config.QuickTwoHotkey, 332, 208); quickTwoHotkey.Width = 280; actionCard.Controls.Add(quickTwoHotkey);
+            Label note = Theme.Label("Create and edit profiles under Display profiles. Every profile also stays available from the tray.", 8.5f, false); note.ForeColor = Theme.Muted; note.Location = new Point(20, 286); actionCard.Controls.Add(note);
             Button cancel = Theme.Button("Cancel", false); cancel.SetBounds(424, 527, 104, 42); cancel.Click += delegate { Close(); }; page.Controls.Add(cancel);
             Button save = Theme.Button("Save changes", true); save.SetBounds(540, 527, 126, 42); save.Click += SaveGeneral; page.Controls.Add(save);
+        }
+        ComboBox QuickActionBox(string selectedId, int x, int y)
+        {
+            ComboBox box = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, BackColor = Theme.Input, ForeColor = Theme.Text, Width = 280, Location = new Point(x, y), Font = new Font("Segoe UI", 10.5f), FlatStyle = FlatStyle.Flat };
+            box.Items.Add(new QuickActionOption { Id = "", Name = "No action" });
+            box.Items.Add(new QuickActionOption { Id = "$all", Name = "All displays" });
+            foreach (DisplayProfile profile in config.Profiles) box.Items.Add(new QuickActionOption { Id = profile.Id, Name = profile.Name });
+            for (int i = 0; i < box.Items.Count; i++) if (((QuickActionOption)box.Items[i]).Id == selectedId) { box.SelectedIndex = i; break; }
+            if (box.SelectedIndex < 0) box.SelectedIndex = 0;
+            return box;
         }
         TextBox HotkeyBox(string value, int x, int y)
         {
@@ -307,7 +332,7 @@ namespace MonitorHotkeys
         }
         void SaveGeneral(object sender, EventArgs e)
         {
-            if (tv.SelectedIndex >= 0) config.TvMatch = monitors[tv.SelectedIndex].Name; config.TvOnlyHotkey = tvHotkey.Text; config.AllHotkey = allHotkey.Text; ConfigStore.Save(config); owner.RegisterHotkeys(); Close();
+            config.QuickOneProfileId = ((QuickActionOption)quickOne.SelectedItem).Id; config.QuickTwoProfileId = ((QuickActionOption)quickTwo.SelectedItem).Id; config.QuickOneHotkey = quickOneHotkey.Text; config.QuickTwoHotkey = quickTwoHotkey.Text; ConfigStore.Save(config); owner.RegisterHotkeys(); Close();
         }
         void BuildProfiles(Control page)
         {
@@ -340,9 +365,9 @@ namespace MonitorHotkeys
             if (String.IsNullOrWhiteSpace(profileName.Text)) { MessageBox.Show(this, "Enter a profile name.", "Display profiles"); return; }
             List<string> devices = new List<string>(); for (int i = 0; i < monitors.Count; i++) if (checks.GetItemChecked(i)) devices.Add(monitors[i].DevicePath);
             if (devices.Count == 0) { MessageBox.Show(this, "Choose at least one display.", "Display profiles"); return; }
-            DisplayProfile p = profiles.SelectedItem as DisplayProfile; if (p == null) { p = new DisplayProfile(); config.Profiles.Add(p); profiles.Items.Add(p); } p.Name = profileName.Text.Trim(); p.Devices = devices; p.MonitorInputs = profileInputs.Select(x => new MonitorInputAssignment { DevicePath = x.DevicePath, Input = x.Input }).ToList(); profiles.Refresh(); ConfigStore.Save(config); owner.RefreshMenu();
+            DisplayProfile p = profiles.SelectedItem as DisplayProfile; if (p == null) { p = new DisplayProfile(); config.Profiles.Add(p); profiles.Items.Add(p); } p.Name = profileName.Text.Trim(); p.Devices = devices; p.MonitorInputs = profileInputs.Select(x => new MonitorInputAssignment { DevicePath = x.DevicePath, Input = x.Input }).ToList(); int selected = profiles.Items.IndexOf(p); profiles.Items.Remove(p); profiles.Items.Insert(selected, p); profiles.SelectedIndex = selected; ConfigStore.Save(config); owner.RefreshMenu();
         }
-        void DeleteProfile(object sender, EventArgs e) { DisplayProfile p = profiles.SelectedItem as DisplayProfile; if (p == null) return; config.Profiles.Remove(p); profiles.Items.Remove(p); ConfigStore.Save(config); owner.RefreshMenu(); }
+        void DeleteProfile(object sender, EventArgs e) { DisplayProfile p = profiles.SelectedItem as DisplayProfile; if (p == null) return; config.Profiles.Remove(p); profiles.Items.Remove(p); if (config.QuickOneProfileId == p.Id) config.QuickOneProfileId = ""; if (config.QuickTwoProfileId == p.Id) config.QuickTwoProfileId = ""; ConfigStore.Save(config); owner.RegisterHotkeys(); owner.RefreshMenu(); }
         static Control At(Control c, int x, int y) { c.Location = new Point(x, y); return c; }
     }
 
@@ -353,21 +378,21 @@ namespace MonitorHotkeys
         public AppController(bool openSettings)
         {
             Config = ConfigStore.Load(); icon = LoadIcon(); menu = new ContextMenuStrip(); tray = new NotifyIcon { Icon = icon, Text = "DisplayCue", Visible = true, ContextMenuStrip = menu }; tray.DoubleClick += delegate { OpenSettings(); };
-            hotkeys = new HotKeyWindow(); hotkeys.Pressed += delegate(int id) { if (id == 1) TvOnly(); else if (id == 2) AllDisplays(); }; RegisterHotkeys(); RefreshMenu();
+            hotkeys = new HotKeyWindow(); hotkeys.Pressed += delegate(int id) { if (id == 1) RunQuickAction(Config.QuickOneProfileId, "Quick action 1"); else if (id == 2) RunQuickAction(Config.QuickTwoProfileId, "Quick action 2"); }; RegisterHotkeys(); RefreshMenu();
             if (openSettings) { System.Windows.Forms.Timer startup = new System.Windows.Forms.Timer(); startup.Interval = 250; startup.Tick += delegate { startup.Stop(); startup.Dispose(); OpenSettings(); }; startup.Start(); }
         }
         Icon LoadIcon() { string p = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tray-icon.ico"); return File.Exists(p) ? new Icon(p) : SystemIcons.Application; }
         public void RefreshMenu()
         {
             menu.Items.Clear(); ToolStripMenuItem profiles = new ToolStripMenuItem("Display profiles");
-            profiles.DropDownItems.Add("TV only", null, delegate { TvOnly(); }); profiles.DropDownItems.Add("All displays", null, delegate { AllDisplays(); });
+            profiles.DropDownItems.Add("All displays", null, delegate { AllDisplays(); });
             if (Config.Profiles.Count > 0) profiles.DropDownItems.Add(new ToolStripSeparator());
             foreach (DisplayProfile profile in Config.Profiles) { DisplayProfile captured = profile; profiles.DropDownItems.Add(profile.Name, null, delegate { Apply(captured); }); }
             menu.Items.Add(profiles); menu.Items.Add("Identify displays", null, delegate { Identify(); }); menu.Items.Add("Settings and profiles…", null, delegate { OpenSettings(); }); menu.Items.Add(new ToolStripSeparator()); menu.Items.Add("Exit", null, delegate { ExitThread(); });
         }
         public void RegisterHotkeys()
         {
-            hotkeys.Remove(1); hotkeys.Remove(2); bool ok = true; uint m, k; if (!String.IsNullOrWhiteSpace(Config.TvOnlyHotkey)) ok = ParseHotkey(Config.TvOnlyHotkey, out m, out k) && hotkeys.Add(1, m, k); uint m2, k2; if (!String.IsNullOrWhiteSpace(Config.AllHotkey)) ok = ParseHotkey(Config.AllHotkey, out m2, out k2) && hotkeys.Add(2, m2, k2) && ok;
+            hotkeys.Remove(1); hotkeys.Remove(2); bool ok = true; uint m, k; if (!String.IsNullOrWhiteSpace(Config.QuickOneHotkey) && !String.IsNullOrWhiteSpace(Config.QuickOneProfileId)) ok = ParseHotkey(Config.QuickOneHotkey, out m, out k) && hotkeys.Add(1, m, k); uint m2, k2; if (!String.IsNullOrWhiteSpace(Config.QuickTwoHotkey) && !String.IsNullOrWhiteSpace(Config.QuickTwoProfileId)) ok = ParseHotkey(Config.QuickTwoHotkey, out m2, out k2) && hotkeys.Add(2, m2, k2) && ok;
             if (!ok) tray.ShowBalloonTip(4000, "DisplayCue", "A chosen hotkey is already in use. Choose another in Settings.", ToolTipIcon.Warning);
         }
         bool ParseHotkey(string text, out uint mods, out uint key)
@@ -375,9 +400,12 @@ namespace MonitorHotkeys
             mods = 0; key = 0; try { foreach (string raw in text.Split('+')) { string p = raw.Trim(); if (p.Equals("Ctrl", StringComparison.OrdinalIgnoreCase)) mods |= 2; else if (p.Equals("Alt", StringComparison.OrdinalIgnoreCase)) mods |= 1; else if (p.Equals("Shift", StringComparison.OrdinalIgnoreCase)) mods |= 4; else if (p.Equals("Win", StringComparison.OrdinalIgnoreCase)) mods |= 8; else key = (uint)(Keys)Enum.Parse(typeof(Keys), p, true); } return key != 0; } catch { return false; }
         }
         void OpenSettings() { SettingsForm f = new SettingsForm(this); f.ShowDialog(); RefreshMenu(); }
-        void TvOnly()
+        void RunQuickAction(string profileId, string actionName)
         {
-            List<MonitorInfo> m = DisplayEngine.GetMonitors(); MonitorInfo tv = m.FirstOrDefault(x => x.Name == Config.TvMatch); if (tv == null) { Error("The selected TV is not connected."); return; } Apply(new DisplayProfile { Name = "TV only", Devices = new List<string> { tv.DevicePath } });
+            if (profileId == "$all") { AllDisplays(); return; }
+            DisplayProfile profile = Config.Profiles.FirstOrDefault(x => x.Id == profileId);
+            if (profile == null) { tray.ShowBalloonTip(3500, "DisplayCue", actionName + " has no profile assigned. Choose one in Settings.", ToolTipIcon.Info); return; }
+            Apply(profile);
         }
         void AllDisplays() { try { DisplayEngine.RestoreExtended(); } catch (Exception ex) { Error(ex.Message); } }
         void Apply(DisplayProfile p)

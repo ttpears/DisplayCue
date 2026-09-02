@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 $project = Join-Path $PSScriptRoot 'MonitorHotkeys.csproj'
 $publish = Join-Path $Output 'layout'
 $assetOutput = Join-Path $publish 'Assets'
-$packageVersion = '1.1.0.0'
+$packageVersion = '1.2.0.0'
 $msix = Join-Path $Output "DisplayCue_${packageVersion}_x64.msix"
 
 Remove-Item -LiteralPath $Output -Recurse -Force -ErrorAction SilentlyContinue
