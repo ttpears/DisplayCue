@@ -142,14 +142,32 @@ namespace MonitorHotkeys
         }
         public static void RestoreExtended()
         {
-            int e = SetDisplayConfig(0, null, 0, null, SDC_APPLY | 0x4); if (e != 0) throw new InvalidOperationException("Windows could not restore the extended desktop (error " + e + ").");
+            int e = 0;
+            for (int attempt = 0; attempt < 5; attempt++)
+            {
+                e = SetDisplayConfig(0, null, 0, null, SDC_APPLY | 0x4);
+                if (e == 0) return;
+                Thread.Sleep(600);
+            }
+            throw new InvalidOperationException("Windows could not restore the extended desktop (error " + e + ").");
         }
         public static void ApplyDevicePaths(IEnumerable<string> devicePaths)
         {
             HashSet<string> wantedDevices = new HashSet<string>(devicePaths, StringComparer.OrdinalIgnoreCase);
-            RestoreExtended(); Thread.Sleep(800);
-            List<MonitorInfo> monitors = GetMonitors(); HashSet<string> wantedKeys = new HashSet<string>(monitors.Where(x => wantedDevices.Contains(x.DevicePath)).Select(x => x.Key));
-            if (wantedKeys.Count == 0) throw new InvalidOperationException("None of the displays in this profile are connected.");
+            if (wantedDevices.Count == 0) throw new InvalidOperationException("This profile does not contain any displays.");
+            List<MonitorInfo> monitors = new List<MonitorInfo>(); DateTime deadline = DateTime.UtcNow.AddSeconds(12);
+            do
+            {
+                monitors = GetMonitors();
+                if (monitors.Count(x => wantedDevices.Contains(x.DevicePath)) == wantedDevices.Count) break;
+                Thread.Sleep(500);
+            }
+            while (DateTime.UtcNow < deadline);
+            int available = monitors.Count(x => wantedDevices.Contains(x.DevicePath));
+            if (available != wantedDevices.Count) throw new InvalidOperationException("Only " + available + " of " + wantedDevices.Count + " displays in this profile became available. Check their input source, cable, or power.");
+            RestoreExtended(); Thread.Sleep(1000);
+            monitors = GetMonitors(); HashSet<string> wantedKeys = new HashSet<string>(monitors.Where(x => wantedDevices.Contains(x.DevicePath)).Select(x => x.Key));
+            if (wantedKeys.Count != wantedDevices.Count) throw new InvalidOperationException("Windows did not make every display in this profile available after restoring the extended desktop.");
             if (wantedKeys.Count == monitors.Count) return;
             PATH[] active; MODE[] modes; Query(QDC_ONLY_ACTIVE_PATHS, out active, out modes); List<PATH> selected = new List<PATH>();
             foreach (PATH original in active)
@@ -420,7 +438,7 @@ namespace MonitorHotkeys
             }
             catch (Exception ex)
             {
-                try { if (previousDisplays.Count > 0) DisplayEngine.ApplyDevicePaths(previousDisplays); ApplyMonitorInputs(previousInputs); } catch { }
+                try { ApplyMonitorInputs(previousInputs); if (previousDisplays.Count > 0) DisplayEngine.ApplyDevicePaths(previousDisplays); } catch { }
                 Error(ex.Message);
             }
         }
@@ -437,11 +455,12 @@ namespace MonitorHotkeys
                     if (monitor == null || !monitor.SupportsInputSwitching) throw new InvalidOperationException("A monitor input in this profile is not currently reachable through DDC/CI.");
                     if (monitor.CurrentInput.HasValue) previous.Add(new MonitorInputAssignment { DevicePath = monitor.DevicePath, Input = monitor.CurrentInput.Value });
                 }
-                foreach (MonitorInputAssignment assignment in assignments)
+                bool changed = false; foreach (MonitorInputAssignment assignment in assignments)
                 {
                     DdcMonitorInfo monitor = ddc.First(x => x.DevicePath.Equals(assignment.DevicePath, StringComparison.OrdinalIgnoreCase));
-                    if (!monitor.CurrentInput.HasValue || monitor.CurrentInput.Value != assignment.Input) { DdcEngine.SetInput(monitor, assignment.Input); Thread.Sleep(180); }
+                    if (!monitor.CurrentInput.HasValue || monitor.CurrentInput.Value != assignment.Input) { DdcEngine.SetInput(monitor, assignment.Input); changed = true; Thread.Sleep(250); }
                 }
+                if (changed) Thread.Sleep(1250);
                 return previous;
             }
             catch
@@ -453,7 +472,7 @@ namespace MonitorHotkeys
         }
         void ConfirmOrRollback(List<string> previousDisplays, List<MonitorInputAssignment> previousInputs, string name)
         {
-            using (ConfirmLayoutForm confirm = new ConfirmLayoutForm(name)) if (confirm.ShowDialog() != DialogResult.Yes) try { DisplayEngine.ApplyDevicePaths(previousDisplays); ApplyMonitorInputs(previousInputs); } catch { }
+            using (ConfirmLayoutForm confirm = new ConfirmLayoutForm(name)) if (confirm.ShowDialog() != DialogResult.Yes) try { ApplyMonitorInputs(previousInputs); DisplayEngine.ApplyDevicePaths(previousDisplays); } catch { }
         }
         public void Identify()
         {

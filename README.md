@@ -37,6 +37,8 @@ The two quick actions can have global hotkeys. Additional profiles remain availa
 
 Before applying a profile, DisplayCue captures the active Windows topology and current input of every affected DDC/CI monitor. If the confirmation countdown expires or **Revert** is selected, both layers are restored.
 
+When a profile brings monitors back from another computer or input, DisplayCue waits for every expected display to reconnect before asking Windows to extend the desktop. It will fail safely instead of silently applying only part of the profile.
+
 DDC/CI implementations vary by monitor, graphics adapter, dock, and cable. Test a physical input mapping while the monitor controls remain accessible. A read-only compatibility report can be generated with:
 
 ```powershell
