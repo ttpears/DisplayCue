@@ -8,6 +8,7 @@ DisplayCue stores application settings and user-created display profiles locally
 
 DisplayCue does not use analytics, advertising, telemetry, online services, third-party trackers, or network communication.
 
-DisplayCue uses Windows display-management APIs and user-configured global keyboard shortcuts solely to identify connected displays and apply display layouts requested by the user.
+DisplayCue uses Windows display-management and monitor-configuration APIs, including DDC/CI where supported, and user-configured global keyboard shortcuts solely to identify connected displays and apply display layouts and monitor inputs requested by the user.
 
 Questions or concerns may be submitted through the DisplayCue GitHub repository's Issues page.
+
