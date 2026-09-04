@@ -7,9 +7,9 @@ This directory contains the compiled Windows application that replaces the Power
 - `DisplayEngine` wraps Windows DisplayConfig APIs and identifies monitors by EDID device path.
 - `DdcEngine` uses the native Windows monitor configuration API (`Dxva2.dll`) to discover DDC/CI displays, parse their MCCS capability strings, read VCP `0x60`, and switch only input values explicitly advertised by the monitor.
 - `AppController` owns the notification-area icon, menus, global hotkeys and application lifetime.
-- `PeerService` accepts and sends authenticated local-network profile commands. Pairing keys are encrypted for the current Windows user with DPAPI.
+- `PeerService` transports authenticated local-network state and transaction phases. Pairing keys are encrypted for the current Windows user with DPAPI.
 - `SettingsForm` manages arbitrary display profiles and two assignable quick-action hotkeys. Each profile may include physical monitor input assignments.
-- Profile changes capture the previous active topology and affected monitor inputs, then automatically roll both back after 15 seconds unless confirmed.
+- Paired profile changes synchronize live topology and DDC reachability, release shared screens before switching their inputs, verify both final states, and roll both PCs back after 15 seconds unless confirmed.
 - Configuration is stored under `%LocalAppData%\DisplayCue`. The app imports earlier DisplayCue and prototype settings on first launch.
 
 ## Local legacy build
@@ -40,4 +40,4 @@ GitHub Actions performs the same publish step and creates a release ZIP for vers
 
 DisplayCue does not require PowerToys or a monitor vendor utility. Input control is implemented directly through the Windows physical-monitor APIs. Only active Windows display targets can initially be discovered. Some monitors continue answering DDC commands through an inactive video input and some do not; that property must be calibrated before relying on a single computer as a permanent controller.
 
-Input mappings are stored by the Windows monitor device path and VCP value. The UI shows friendly names such as HDMI 1 and DisplayPort 1, while retaining the exact value reported by the monitor. Unsupported monitors remain part of Windows display profiles but are left unchanged at the hardware-input layer.
+Input mappings retain the local Windows device path, a cross-PC EDID fingerprint, an optional user-defined Peer ID, and the VCP value. The UI shows friendly names such as HDMI 1 and DisplayPort 1. During a paired handoff, a failed DDC operation is retried through the other PC; the same fallback is available during rollback. Unsupported monitors remain part of Windows display profiles but are left unchanged at the hardware-input layer.

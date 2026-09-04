@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Win32;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace MonitorHotkeys
@@ -15,7 +17,7 @@ namespace MonitorHotkeys
 
     public sealed class DdcMonitorInfo
     {
-        public string Name, DevicePath, GdiName, Capabilities, Error;
+        public string Name, DevicePath, PhysicalId, GdiName, Capabilities, Error;
         public uint? CurrentInput;
         public List<DdcInputOption> Inputs = new List<DdcInputOption>();
         internal IntPtr Handle;
@@ -73,6 +75,7 @@ namespace MonitorHotkeys
                     {
                         Name = display == null ? item.description : display.Name,
                         DevicePath = display == null ? logical.deviceName : display.DevicePath,
+                        PhysicalId = display == null ? "" : PhysicalFingerprint(display.DevicePath),
                         GdiName = logical.deviceName,
                         Handle = item.handle
                     };
@@ -127,6 +130,21 @@ namespace MonitorHotkeys
                 case 0x1B: return "USB-C";
                 default: return "Input 0x" + value.ToString("X2");
             }
+        }
+
+        static string PhysicalFingerprint(string devicePath)
+        {
+            try
+            {
+                string[] parts = (devicePath ?? "").Split('#'); if (parts.Length < 3) return "";
+                string keyPath = "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY\\" + parts[1] + "\\" + parts[2] + "\\Device Parameters";
+                using (RegistryKey key = Registry.LocalMachine.OpenSubKey(keyPath))
+                {
+                    byte[] edid = key == null ? null : key.GetValue("EDID") as byte[]; if (edid == null || edid.Length < 128) return "";
+                    using (SHA256 sha = SHA256.Create()) return Convert.ToBase64String(sha.ComputeHash(edid)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+                }
+            }
+            catch { return ""; }
         }
 
         static List<DdcInputOption> ParseInputOptions(string capabilities)

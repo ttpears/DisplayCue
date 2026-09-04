@@ -91,7 +91,7 @@ namespace MonitorHotkeys
                 finally { if (stream != null) stream.Dispose(); }
             }
         }
-        static string CommandName(string command) { return command.StartsWith("PROFILE:") ? "PROFILE" : command; }
+        static string CommandName(string command) { if (command.StartsWith("PROFILE:")) return "PROFILE"; if (command.StartsWith("TX|")) { string[] p = command.Split('|'); return p.Length > 1 ? "TX_" + p[1] : "TX"; } return command; }
         string Sign(string value) { using (HMACSHA256 hmac = new HMACSHA256(Key())) return Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(value))); }
         static bool FixedEquals(string a, string b)
         {

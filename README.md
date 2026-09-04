@@ -38,9 +38,13 @@ The two quick actions can have global hotkeys. Additional profiles remain availa
 
 Install DisplayCue on both PCs. Under **Paired computer**, generate a pairing key on one PC and paste the same key on the other. Enter the other computer's hostname or private IP address, enable peer control, allow DisplayCue on private networks if Windows Firewall asks, and use **Test connection**.
 
-Each display profile can name a profile to run on the paired computer. DisplayCue applies that remote profile first, waits for it to finish, and only then performs the local DDC and Windows topology changes. Requests are authenticated with HMAC-SHA256, expire after 30 seconds, and include replay-resistant nonces. The pairing key is encrypted for the current Windows user with DPAPI and is never written to `settings.json`.
+Each display profile can name a profile to run on the paired computer. DisplayCue reads the live topology on both PCs and performs the pair as one coordinated transition: both sides prepare, the PC giving up screens releases its Windows desktop, monitor inputs switch, and both sides apply and verify their final profiles. The transition is committed only after confirmation; a failure asks both PCs to restore the state they captured at the start. This ordering works in either handoff direction and avoids two computers fighting over the same screens.
 
-Connection tests report the paired device and its available profile names. Peer requests and actionable failures are recorded in `%LocalAppData%\DisplayCue\peer.log`; pairing keys and monitor identifiers are never written to that log.
+DDC input changes are also coordinated. Each side reports which monitors it can currently control; if the preferred PC loses DDC access during a handoff, the same change is retried through the other PC. DisplayCue matches physical monitors by EDID fingerprint. If identical monitors cannot be distinguished automatically, enter the same short **Peer ID** (such as `left` or `right`) for that monitor in both PCs' monitor-input settings.
+
+Requests are authenticated with HMAC-SHA256, expire after 30 seconds, and include replay-resistant nonces and per-handoff transaction IDs. The pairing key is encrypted for the current Windows user with DPAPI and is never written to `settings.json`.
+
+Connection tests report the paired device, available profile names, and current active profile/topology. Peer requests, transition phases, synchronized state, and actionable failures are recorded in `%LocalAppData%\DisplayCue\peer.log`; pairing keys and monitor device paths are never written to that log.
 
 ## Safety and recovery
 

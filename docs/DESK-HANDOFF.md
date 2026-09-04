@@ -2,7 +2,7 @@
 
 Desk Handoff coordinates DisplayCue profiles across trusted Windows computers. It is designed to complement input-sharing software such as Mouse Without Borders: DisplayCue owns display topology and monitor-input changes, while the input-sharing application continues to own keyboard, mouse, and clipboard transport.
 
-Version 1.3 implements the first two-computer phase: a local profile may invoke a named profile on one paired computer before applying locally. The transactional multi-device model below remains the direction for later releases.
+Version 1.4 introduces transactional two-computer handoff. A local profile references a named peer profile, and both installations exchange their live topology and DDC reachability before either final layout is committed. The trusted-device-group model below remains the direction for extending the same protocol beyond two computers.
 
 ## Model
 
@@ -17,10 +17,10 @@ This separation allows local profiles to work without networking and prevents a 
 
 1. Discover required peers and reject the handoff if any required participant is unavailable.
 2. Ask every participant to validate its referenced profile and capture its current topology and affected monitor inputs.
-3. Prepare destination display signals before changing physical monitor inputs.
-4. Commit local profiles and route DDC input changes through the peer proven to control each monitor in that state.
-5. Confirm that required peers reached their target states.
-6. Commit the transaction, or restore every captured state if a required action fails or times out.
+3. Reduce each desktop to the displays it keeps through the transition, so a computer releases shared screens before their inputs move.
+4. Apply each DDC change through the currently reachable peer, retrying through the other peer when the first route disappears.
+5. Apply and verify both final Windows topologies.
+6. Commit after user confirmation, or restore both captured states—including cross-peer DDC fallback—if a required action fails or times out.
 
 Transactions use unique identifiers and expire automatically. Repeated commit and rollback messages must be idempotent.
 
@@ -42,7 +42,7 @@ For each physical monitor, calibration records:
 - Whether a route remains responsive when its video input is inactive.
 - Average response time and recent failures.
 
-Automatic matching uses EDID manufacturer, product and serial data. When identical monitors omit usable serial numbers, DisplayCue asks the user to identify and name them. Users normally configure input ownership (for example, Desktop or Laptop); they do not configure which cable is "direct."
+Automatic matching uses a fingerprint of the monitor EDID, including its hardware serial when supplied. When identical monitors expose indistinguishable EDIDs, the user assigns the same short Peer ID (for example, `left` or `right`) to the corresponding monitor on both PCs. Users configure the destination input, not which computer is permanently "primary" for DDC; reachability is measured for each transition.
 
 ## Capability levels
 
