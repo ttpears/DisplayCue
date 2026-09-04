@@ -1,6 +1,8 @@
 # Desk Handoff architecture
 
-Desk Handoff coordinates DisplayCue profiles across two or more trusted Windows computers. It is designed to complement input-sharing software such as Mouse Without Borders: DisplayCue owns display topology and monitor-input changes, while the input-sharing application continues to own keyboard, mouse, and clipboard transport.
+Desk Handoff coordinates DisplayCue profiles across trusted Windows computers. It is designed to complement input-sharing software such as Mouse Without Borders: DisplayCue owns display topology and monitor-input changes, while the input-sharing application continues to own keyboard, mouse, and clipboard transport.
+
+Version 1.3 implements the first two-computer phase: a local profile may invoke a named profile on one paired computer before applying locally. The transactional multi-device model below remains the direction for later releases.
 
 ## Model
 
@@ -26,7 +28,7 @@ Transactions use unique identifiers and expire automatically. Repeated commit an
 
 - Pairing requires an explicit action on both computers and an out-of-band secret or authenticated code comparison.
 - Each installation has a persistent device identity. Trust can be reviewed and revoked locally.
-- Commands are encrypted and authenticated, include a timestamp and nonce, and are rejected when replayed.
+- Commands are authenticated with HMAC-SHA256, include a timestamp and nonce, and are rejected when replayed. Payload encryption is planned before internet relay or use outside trusted private networks.
 - Discovery remains on the local network and reveals no profile contents or monitor details to unpaired devices.
 - DisplayCue has no cloud dependency. Internet relay is outside the initial scope.
 

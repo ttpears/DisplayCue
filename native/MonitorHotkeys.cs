@@ -22,6 +22,11 @@ namespace MonitorHotkeys
         [DataMember] public string QuickTwoProfileId = "$all";
         [DataMember] public string QuickOneHotkey = "Ctrl+Shift+F11";
         [DataMember] public string QuickTwoHotkey = "Ctrl+Shift+F12";
+        [DataMember] public bool PeerEnabled;
+        [DataMember] public string PeerHost = "";
+        [DataMember] public int PeerPort = 45831;
+        [DataMember] public int ListenPort = 45831;
+        [DataMember] public string DeviceName = Environment.MachineName;
         [DataMember] public List<DisplayProfile> Profiles = new List<DisplayProfile>();
     }
 
@@ -32,6 +37,7 @@ namespace MonitorHotkeys
         [DataMember] public string Name = "New profile";
         [DataMember] public List<string> Devices = new List<string>();
         [DataMember] public List<MonitorInputAssignment> MonitorInputs = new List<MonitorInputAssignment>();
+        [DataMember] public string PeerProfileName = "";
         public override string ToString() { return Name; }
     }
 
@@ -75,6 +81,7 @@ namespace MonitorHotkeys
                         if (String.IsNullOrWhiteSpace(c.QuickTwoHotkey) || (c.QuickTwoHotkey == "Ctrl+Shift+F12" && !String.IsNullOrWhiteSpace(c.AllHotkey) && c.AllHotkey != "Ctrl+Shift+F12")) c.QuickTwoHotkey = String.IsNullOrWhiteSpace(c.AllHotkey) ? "Ctrl+Shift+F12" : c.AllHotkey;
                         if (c.QuickOneProfileId == null) c.QuickOneProfileId = "";
                         if (String.IsNullOrWhiteSpace(c.QuickTwoProfileId)) c.QuickTwoProfileId = "$all";
+                        if (c.PeerPort <= 0) c.PeerPort = 45831; if (c.ListenPort <= 0) c.ListenPort = 45831; if (String.IsNullOrWhiteSpace(c.DeviceName)) c.DeviceName = Environment.MachineName;
                         return c;
                     }
             }
@@ -292,7 +299,8 @@ namespace MonitorHotkeys
             public override string ToString() { return Name; }
         }
         readonly AppController owner; readonly AppConfig config; readonly List<MonitorInfo> monitors;
-        ComboBox quickOne, quickTwo; TextBox quickOneHotkey, quickTwoHotkey; ListBox profiles; CheckedListBox checks; TextBox profileName; Panel content; Button generalNav, profilesNav;
+        ComboBox quickOne, quickTwo; TextBox quickOneHotkey, quickTwoHotkey; ListBox profiles; CheckedListBox checks; TextBox profileName, profilePeerName; Panel content; Button generalNav, profilesNav, peerNav;
+        TextBox peerHost, peerPort, listenPort, pairingKey, deviceName; CheckBox peerEnabled;
         List<MonitorInputAssignment> profileInputs = new List<MonitorInputAssignment>(); Button inputButton;
         public SettingsForm(AppController owner)
         {
@@ -301,16 +309,17 @@ namespace MonitorHotkeys
             Panel sidebar = new Panel { Dock = DockStyle.Left, Width = 196, BackColor = Theme.Sidebar, Padding = new Padding(16, 22, 16, 16) }; Controls.Add(sidebar);
             Label brand = Theme.Label("DisplayCue", 18, true); brand.Location = new Point(18, 20); sidebar.Controls.Add(brand);
             Label tagline = Theme.Label("Displays, on cue.", 9, false); tagline.ForeColor = Theme.Muted; tagline.Location = new Point(20, 54); sidebar.Controls.Add(tagline);
-            generalNav = NavButton("Quick switching", 94); generalNav.Click += delegate { ShowPage(false); }; sidebar.Controls.Add(generalNav);
-            profilesNav = NavButton("Display profiles", 142); profilesNav.Click += delegate { ShowPage(true); }; sidebar.Controls.Add(profilesNav);
+            generalNav = NavButton("Quick switching", 94); generalNav.Click += delegate { ShowPage(0); }; sidebar.Controls.Add(generalNav);
+            profilesNav = NavButton("Display profiles", 142); profilesNav.Click += delegate { ShowPage(1); }; sidebar.Controls.Add(profilesNav);
+            peerNav = NavButton("Paired computer", 190); peerNav.Click += delegate { ShowPage(2); }; sidebar.Controls.Add(peerNav);
             Label version = Theme.Label("Version " + Application.ProductVersion, 8.5f, false); version.ForeColor = Theme.Muted; version.Location = new Point(20, 566); sidebar.Controls.Add(version);
-            content = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Back }; Controls.Add(content); content.BringToFront(); ShowPage(false);
+            content = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Back }; Controls.Add(content); content.BringToFront(); ShowPage(0);
         }
         Button NavButton(string text, int y) { Button b = new Button { Text = text, TextAlign = ContentAlignment.MiddleLeft, Location = new Point(12, y), Size = new Size(172, 42), Padding = new Padding(12, 0, 0, 0), FlatStyle = FlatStyle.Flat, BackColor = Theme.Sidebar, ForeColor = Theme.Muted, Cursor = Cursors.Hand, Font = new Font("Segoe UI Semibold", 9.5f) }; b.FlatAppearance.BorderSize = 0; return b; }
-        void ShowPage(bool showProfiles)
+        void ShowPage(int page)
         {
-            content.Controls.Clear(); generalNav.BackColor = showProfiles ? Theme.Sidebar : Theme.Panel; generalNav.ForeColor = showProfiles ? Theme.Muted : Theme.Text; profilesNav.BackColor = showProfiles ? Theme.Panel : Theme.Sidebar; profilesNav.ForeColor = showProfiles ? Theme.Text : Theme.Muted;
-            if (showProfiles) BuildProfiles(content); else BuildGeneral(content);
+            content.Controls.Clear(); Button[] nav = { generalNav, profilesNav, peerNav }; for (int i = 0; i < nav.Length; i++) { nav[i].BackColor = i == page ? Theme.Panel : Theme.Sidebar; nav[i].ForeColor = i == page ? Theme.Text : Theme.Muted; }
+            if (page == 1) BuildProfiles(content); else if (page == 2) BuildPeer(content); else BuildGeneral(content);
         }
         void BuildGeneral(Control page)
         {
@@ -359,22 +368,24 @@ namespace MonitorHotkeys
             Button identify = Theme.Button("Identify displays", false); identify.SetBounds(518, 29, 148, 40); identify.Click += delegate { owner.Identify(); }; page.Controls.Add(identify);
             Panel listCard = Theme.Card(34, 106, 216, 399); page.Controls.Add(listCard); listCard.Controls.Add(At(Theme.Label("Your profiles", 11, true), 16, 15));
             profiles = new ListBox { BorderStyle = BorderStyle.None, BackColor = Theme.Input, ForeColor = Theme.Text, Font = new Font("Segoe UI", 10), Location = new Point(16, 50), Size = new Size(184, 282), IntegralHeight = false }; foreach (DisplayProfile p in config.Profiles) profiles.Items.Add(p); profiles.SelectedIndexChanged += LoadProfile; listCard.Controls.Add(profiles);
-            Button add = Theme.Button("New profile", false); add.SetBounds(16, 345, 184, 38); add.Click += delegate { profiles.ClearSelected(); profileName.Text = ""; profileInputs = new List<MonitorInputAssignment>(); UpdateInputButton(); for (int i = 0; i < checks.Items.Count; i++) checks.SetItemChecked(i, false); }; listCard.Controls.Add(add);
+            Button add = Theme.Button("New profile", false); add.SetBounds(16, 345, 184, 38); add.Click += delegate { profiles.ClearSelected(); profileName.Text = ""; profilePeerName.Text = ""; profileInputs = new List<MonitorInputAssignment>(); UpdateInputButton(); for (int i = 0; i < checks.Items.Count; i++) checks.SetItemChecked(i, false); }; listCard.Controls.Add(add);
             Panel editorCard = Theme.Card(266, 106, 400, 399); page.Controls.Add(editorCard); editorCard.Controls.Add(At(Theme.Label("Profile details", 11, true), 18, 15));
             editorCard.Controls.Add(At(Theme.Label("Name", 9, true), 18, 53));
             profileName = new TextBox { BackColor = Theme.Input, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 10.5f), Location = new Point(18, 78), Width = 364 }; editorCard.Controls.Add(profileName);
             editorCard.Controls.Add(At(Theme.Label("Displays to keep active", 9, true), 18, 119));
-            checks = new CheckedListBox { CheckOnClick = true, BorderStyle = BorderStyle.None, BackColor = Theme.Input, ForeColor = Theme.Text, Font = new Font("Segoe UI", 10), Location = new Point(18, 145), Size = new Size(364, 165) };
+            checks = new CheckedListBox { CheckOnClick = true, BorderStyle = BorderStyle.None, BackColor = Theme.Input, ForeColor = Theme.Text, Font = new Font("Segoe UI", 10), Location = new Point(18, 145), Size = new Size(364, 105) };
             Dictionary<string, int> totals = monitors.GroupBy(x => x.Name).ToDictionary(x => x.Key, x => x.Count()); Dictionary<string, int> seen = new Dictionary<string, int>();
             for (int i = 0; i < monitors.Count; i++) { MonitorInfo m = monitors[i]; if (!seen.ContainsKey(m.Name)) seen[m.Name] = 0; seen[m.Name]++; string suffix = totals[m.Name] > 1 ? " #" + seen[m.Name] : ""; checks.Items.Add((i + 1) + ". " + m.Name + suffix + (m.Active ? "  ·  On" : "  ·  Off")); } editorCard.Controls.Add(checks);
-            inputButton = Theme.Button("Monitor inputs…", false); inputButton.SetBounds(18, 315, 154, 40); inputButton.Click += ConfigureInputs; editorCard.Controls.Add(inputButton);
-            Button delete = Theme.Button("Delete", false); delete.SetBounds(184, 315, 82, 40); delete.Click += DeleteProfile; editorCard.Controls.Add(delete);
-            Button save = Theme.Button("Save profile", true); save.SetBounds(276, 315, 106, 40); save.Click += SaveProfile; editorCard.Controls.Add(save);
+            editorCard.Controls.Add(At(Theme.Label("Profile to run on paired computer", 8.5f, true), 18, 260));
+            profilePeerName = new TextBox { BackColor = Theme.Input, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 10), Location = new Point(18, 283), Width = 364 }; editorCard.Controls.Add(profilePeerName);
+            inputButton = Theme.Button("Monitor inputs…", false); inputButton.SetBounds(18, 327, 154, 40); inputButton.Click += ConfigureInputs; editorCard.Controls.Add(inputButton);
+            Button delete = Theme.Button("Delete", false); delete.SetBounds(184, 327, 82, 40); delete.Click += DeleteProfile; editorCard.Controls.Add(delete);
+            Button save = Theme.Button("Save profile", true); save.SetBounds(276, 327, 106, 40); save.Click += SaveProfile; editorCard.Controls.Add(save);
             Label note = Theme.Label("Profiles are always available by right-clicking the tray icon.", 8.5f, false); note.ForeColor = Theme.Muted; note.Location = new Point(36, 529); page.Controls.Add(note);
         }
         void LoadProfile(object sender, EventArgs e)
         {
-            DisplayProfile p = profiles.SelectedItem as DisplayProfile; if (p == null) return; profileName.Text = p.Name; profileInputs = p.MonitorInputs == null ? new List<MonitorInputAssignment>() : p.MonitorInputs.Select(x => new MonitorInputAssignment { DevicePath = x.DevicePath, Input = x.Input }).ToList(); UpdateInputButton(); for (int i = 0; i < monitors.Count; i++) checks.SetItemChecked(i, p.Devices.Contains(monitors[i].DevicePath));
+            DisplayProfile p = profiles.SelectedItem as DisplayProfile; if (p == null) return; profileName.Text = p.Name; profilePeerName.Text = p.PeerProfileName ?? ""; profileInputs = p.MonitorInputs == null ? new List<MonitorInputAssignment>() : p.MonitorInputs.Select(x => new MonitorInputAssignment { DevicePath = x.DevicePath, Input = x.Input }).ToList(); UpdateInputButton(); for (int i = 0; i < monitors.Count; i++) checks.SetItemChecked(i, p.Devices.Contains(monitors[i].DevicePath));
         }
         void ConfigureInputs(object sender, EventArgs e) { using (MonitorInputsForm form = new MonitorInputsForm(profileInputs)) if (form.ShowDialog(this) == DialogResult.OK) { profileInputs = form.Assignments; UpdateInputButton(); } }
         void UpdateInputButton() { if (inputButton != null) inputButton.Text = profileInputs.Count == 0 ? "Monitor inputs…" : "Monitor inputs (" + profileInputs.Count + ")"; }
@@ -383,8 +394,35 @@ namespace MonitorHotkeys
             if (String.IsNullOrWhiteSpace(profileName.Text)) { MessageBox.Show(this, "Enter a profile name.", "Display profiles"); return; }
             List<string> devices = new List<string>(); for (int i = 0; i < monitors.Count; i++) if (checks.GetItemChecked(i)) devices.Add(monitors[i].DevicePath);
             if (devices.Count == 0) { MessageBox.Show(this, "Choose at least one display.", "Display profiles"); return; }
-            DisplayProfile p = profiles.SelectedItem as DisplayProfile; if (p == null) { p = new DisplayProfile(); config.Profiles.Add(p); profiles.Items.Add(p); } p.Name = profileName.Text.Trim(); p.Devices = devices; p.MonitorInputs = profileInputs.Select(x => new MonitorInputAssignment { DevicePath = x.DevicePath, Input = x.Input }).ToList(); int selected = profiles.Items.IndexOf(p); profiles.Items.Remove(p); profiles.Items.Insert(selected, p); profiles.SelectedIndex = selected; ConfigStore.Save(config); owner.RefreshMenu();
+            DisplayProfile p = profiles.SelectedItem as DisplayProfile; if (p == null) { p = new DisplayProfile(); config.Profiles.Add(p); profiles.Items.Add(p); } p.Name = profileName.Text.Trim(); p.PeerProfileName = profilePeerName.Text.Trim(); p.Devices = devices; p.MonitorInputs = profileInputs.Select(x => new MonitorInputAssignment { DevicePath = x.DevicePath, Input = x.Input }).ToList(); int selected = profiles.Items.IndexOf(p); profiles.Items.Remove(p); profiles.Items.Insert(selected, p); profiles.SelectedIndex = selected; ConfigStore.Save(config); owner.RefreshMenu();
         }
+        void BuildPeer(Control page)
+        {
+            Label title = Theme.Label("Paired computer", 21, true); title.Location = new Point(34, 28); page.Controls.Add(title);
+            Label help = Theme.Label("Coordinate display profiles with another PC on your private network.", 10, false); help.ForeColor = Theme.Muted; help.Location = new Point(36, 67); page.Controls.Add(help);
+            Panel card = Theme.Card(34, 106, 632, 399); page.Controls.Add(card);
+            peerEnabled = new CheckBox { Text = "Allow authenticated peer control", Checked = config.PeerEnabled, AutoSize = true, ForeColor = Theme.Text, Location = new Point(20, 18), Font = new Font("Segoe UI Semibold", 10) }; card.Controls.Add(peerEnabled);
+            card.Controls.Add(At(Theme.Label("This computer", 8.5f, true), 20, 61)); deviceName = PeerText(config.DeviceName, 20, 84, 280); card.Controls.Add(deviceName);
+            card.Controls.Add(At(Theme.Label("Listen port", 8.5f, true), 332, 61)); listenPort = PeerText(config.ListenPort.ToString(), 332, 84, 280); card.Controls.Add(listenPort);
+            card.Controls.Add(At(Theme.Label("Paired computer address", 8.5f, true), 20, 132)); peerHost = PeerText(config.PeerHost, 20, 155, 280); card.Controls.Add(peerHost);
+            card.Controls.Add(At(Theme.Label("Peer port", 8.5f, true), 332, 132)); peerPort = PeerText(config.PeerPort.ToString(), 332, 155, 280); card.Controls.Add(peerPort);
+            card.Controls.Add(At(Theme.Label("Pairing key", 8.5f, true), 20, 203)); pairingKey = PeerText(PeerKeyStore.Get(), 20, 226, 438); card.Controls.Add(pairingKey);
+            Button generate = Theme.Button("Generate", false); generate.SetBounds(470, 222, 142, 38); generate.Click += delegate { pairingKey.Text = PeerKeyStore.Generate(); }; card.Controls.Add(generate);
+            Label keyHelp = Theme.Label("Generate on one PC, then paste the same key on the other. Windows DPAPI protects it locally.", 8.3f, false); keyHelp.ForeColor = Theme.Muted; keyHelp.Location = new Point(20, 266); card.Controls.Add(keyHelp);
+            Label profileHelp = Theme.Label("In each local profile, enter the profile name that should run on the paired PC first.", 8.3f, false); profileHelp.ForeColor = Theme.Muted; profileHelp.Location = new Point(20, 293); card.Controls.Add(profileHelp);
+            Button test = Theme.Button("Test connection", false); test.SetBounds(350, 335, 132, 40); test.Click += TestPeer; card.Controls.Add(test);
+            Button save = Theme.Button("Save", true); save.SetBounds(494, 335, 118, 40); save.Click += SavePeer; card.Controls.Add(save);
+        }
+        TextBox PeerText(string value, int x, int y, int width) { return new TextBox { Text = value ?? "", BackColor = Theme.Input, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 10.5f), Location = new Point(x, y), Width = width }; }
+        bool StorePeerSettings()
+        {
+            int remote, local; if (!Int32.TryParse(peerPort.Text, out remote) || remote < 1 || remote > 65535 || !Int32.TryParse(listenPort.Text, out local) || local < 1 || local > 65535) { MessageBox.Show(this, "Enter valid TCP ports from 1 to 65535.", "Paired computer"); return false; }
+            if (peerEnabled.Checked) try { if (Convert.FromBase64String(pairingKey.Text.Trim()).Length < 32) throw new FormatException(); } catch { MessageBox.Show(this, "Generate or paste a valid pairing key before enabling peer control.", "Paired computer"); return false; }
+            try { PeerKeyStore.Set(pairingKey.Text.Trim()); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "Paired computer"); return false; }
+            config.PeerEnabled = peerEnabled.Checked; config.DeviceName = deviceName.Text.Trim(); config.PeerHost = peerHost.Text.Trim(); config.PeerPort = remote; config.ListenPort = local; ConfigStore.Save(config); try { owner.RestartPeer(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "Paired computer", MessageBoxButtons.OK, MessageBoxIcon.Warning); return false; } return true;
+        }
+        void SavePeer(object sender, EventArgs e) { if (StorePeerSettings()) MessageBox.Show(this, "Peer settings saved.", "Paired computer"); }
+        void TestPeer(object sender, EventArgs e) { if (!StorePeerSettings()) return; try { MessageBox.Show(this, "Connected to " + owner.TestPeer(), "Paired computer"); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "Connection failed", MessageBoxButtons.OK, MessageBoxIcon.Warning); } }
         void DeleteProfile(object sender, EventArgs e) { DisplayProfile p = profiles.SelectedItem as DisplayProfile; if (p == null) return; config.Profiles.Remove(p); profiles.Items.Remove(p); if (config.QuickOneProfileId == p.Id) config.QuickOneProfileId = ""; if (config.QuickTwoProfileId == p.Id) config.QuickTwoProfileId = ""; ConfigStore.Save(config); owner.RegisterHotkeys(); owner.RefreshMenu(); }
         static Control At(Control c, int x, int y) { c.Location = new Point(x, y); return c; }
     }
@@ -392,10 +430,11 @@ namespace MonitorHotkeys
     public sealed class AppController : ApplicationContext
     {
         public AppConfig Config { get; private set; }
-        readonly NotifyIcon tray; readonly ContextMenuStrip menu; readonly HotKeyWindow hotkeys; readonly Icon icon;
+        readonly NotifyIcon tray; readonly ContextMenuStrip menu; readonly HotKeyWindow hotkeys; readonly Icon icon; readonly Control dispatcher; PeerService peer;
         public AppController(bool openSettings)
         {
             Config = ConfigStore.Load(); icon = LoadIcon(); menu = new ContextMenuStrip(); tray = new NotifyIcon { Icon = icon, Text = "DisplayCue", Visible = true, ContextMenuStrip = menu }; tray.DoubleClick += delegate { OpenSettings(); };
+            dispatcher = new Control(); dispatcher.CreateControl(); peer = new PeerService(Config, HandlePeerCommand); try { peer.Start(); } catch (Exception ex) { tray.ShowBalloonTip(5000, "DisplayCue peer", ex.Message, ToolTipIcon.Warning); }
             hotkeys = new HotKeyWindow(); hotkeys.Pressed += delegate(int id) { if (id == 1) RunQuickAction(Config.QuickOneProfileId, "Quick action 1"); else if (id == 2) RunQuickAction(Config.QuickTwoProfileId, "Quick action 2"); }; RegisterHotkeys(); RefreshMenu();
             if (openSettings) { System.Windows.Forms.Timer startup = new System.Windows.Forms.Timer(); startup.Interval = 250; startup.Tick += delegate { startup.Stop(); startup.Dispose(); OpenSettings(); }; startup.Start(); }
         }
@@ -418,6 +457,24 @@ namespace MonitorHotkeys
             mods = 0; key = 0; try { foreach (string raw in text.Split('+')) { string p = raw.Trim(); if (p.Equals("Ctrl", StringComparison.OrdinalIgnoreCase)) mods |= 2; else if (p.Equals("Alt", StringComparison.OrdinalIgnoreCase)) mods |= 1; else if (p.Equals("Shift", StringComparison.OrdinalIgnoreCase)) mods |= 4; else if (p.Equals("Win", StringComparison.OrdinalIgnoreCase)) mods |= 8; else key = (uint)(Keys)Enum.Parse(typeof(Keys), p, true); } return key != 0; } catch { return false; }
         }
         void OpenSettings() { SettingsForm f = new SettingsForm(this); f.ShowDialog(); RefreshMenu(); }
+        public void RestartPeer() { try { peer.Start(); } catch (Exception ex) { throw new InvalidOperationException("The peer listener could not start: " + ex.Message, ex); } }
+        public string TestPeer() { return peer.Send("PING"); }
+        string HandlePeerCommand(string command)
+        {
+            if (command == "PING") return Config.DeviceName;
+            if (!command.StartsWith("PROFILE:")) throw new InvalidOperationException("Unsupported command.");
+            string name = command.Substring(8); string result = null; using (ManualResetEventSlim done = new ManualResetEventSlim(false))
+            {
+                dispatcher.BeginInvoke((Action)delegate
+                {
+                    try { DisplayProfile profile = Config.Profiles.FirstOrDefault(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase)); if (profile == null) throw new InvalidOperationException("Profile not found: " + name); ApplyLocal(profile, false); result = profile.Name; }
+                    catch (Exception ex) { result = "ERROR:" + ex.Message; }
+                    finally { done.Set(); }
+                });
+                if (!done.Wait(50000)) throw new InvalidOperationException("The display change timed out.");
+            }
+            if (result.StartsWith("ERROR:")) throw new InvalidOperationException(result.Substring(6)); return result;
+        }
         void RunQuickAction(string profileId, string actionName)
         {
             if (profileId == "$all") { AllDisplays(); return; }
@@ -428,18 +485,23 @@ namespace MonitorHotkeys
         void AllDisplays() { try { DisplayEngine.RestoreExtended(); } catch (Exception ex) { Error(ex.Message); } }
         void Apply(DisplayProfile p)
         {
+            try { if (!String.IsNullOrWhiteSpace(p.PeerProfileName)) peer.Send("PROFILE:" + p.PeerProfileName); ApplyLocal(p, true); }
+            catch (Exception ex) { Error(ex.Message); }
+        }
+        void ApplyLocal(DisplayProfile p, bool confirm)
+        {
             List<string> previousDisplays = new List<string>(); List<MonitorInputAssignment> previousInputs = new List<MonitorInputAssignment>();
             try
             {
                 previousDisplays = DisplayEngine.GetMonitors().Where(x => x.Active).Select(x => x.DevicePath).ToList();
                 previousInputs = ApplyMonitorInputs(p.MonitorInputs);
                 DisplayEngine.ApplyDevicePaths(p.Devices);
-                ConfirmOrRollback(previousDisplays, previousInputs, p.Name);
+                if (confirm) ConfirmOrRollback(previousDisplays, previousInputs, p.Name);
             }
             catch (Exception ex)
             {
                 try { ApplyMonitorInputs(previousInputs); if (previousDisplays.Count > 0) DisplayEngine.ApplyDevicePaths(previousDisplays); } catch { }
-                Error(ex.Message);
+                throw new InvalidOperationException(ex.Message, ex);
             }
         }
         List<MonitorInputAssignment> ApplyMonitorInputs(IEnumerable<MonitorInputAssignment> requested)
@@ -481,7 +543,7 @@ namespace MonitorHotkeys
             System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer(); timer.Interval = 3500; timer.Tick += delegate { timer.Stop(); foreach (IdentifyOverlay o in overlays) o.Close(); timer.Dispose(); }; timer.Start();
         }
         void Error(string message) { MessageBox.Show(message, "DisplayCue", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
-        protected override void ExitThreadCore() { tray.Visible = false; tray.Dispose(); hotkeys.Dispose(); if (icon != SystemIcons.Application) icon.Dispose(); base.ExitThreadCore(); }
+        protected override void ExitThreadCore() { peer.Dispose(); dispatcher.Dispose(); tray.Visible = false; tray.Dispose(); hotkeys.Dispose(); if (icon != SystemIcons.Application) icon.Dispose(); base.ExitThreadCore(); }
     }
 
     static class Program

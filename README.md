@@ -8,6 +8,7 @@ DisplayCue is a lightweight Windows tray application for switching display layou
 - Assign any two profiles—or **all displays**—to configurable global hotkeys.
 - Identify active monitors with large numbered overlays.
 - Control HDMI and DisplayPort inputs on monitors that advertise DDC/CI input-source support.
+- Coordinate profiles with a paired Windows PC before switching local monitor inputs.
 - Restore the previous Windows topology and monitor inputs automatically unless a new profile is confirmed within 15 seconds.
 - Run entirely on the local computer without accounts, analytics, telemetry, or cloud services.
 
@@ -32,6 +33,12 @@ Right-click the DisplayCue notification-area icon and choose **Settings and prof
 Only values advertised by each monitor are offered. Unsupported monitors remain available for Windows display profiles and are otherwise left unchanged.
 
 The two quick actions can have global hotkeys. Additional profiles remain available from the tray menu so DisplayCue does not reserve a large set of system-wide shortcuts.
+
+## Paired computers
+
+Install DisplayCue on both PCs. Under **Paired computer**, generate a pairing key on one PC and paste the same key on the other. Enter the other computer's hostname or private IP address, enable peer control, allow DisplayCue on private networks if Windows Firewall asks, and use **Test connection**.
+
+Each display profile can name a profile to run on the paired computer. DisplayCue applies that remote profile first, waits for it to finish, and only then performs the local DDC and Windows topology changes. Requests are authenticated with HMAC-SHA256, expire after 30 seconds, and include replay-resistant nonces. The pairing key is encrypted for the current Windows user with DPAPI and is never written to `settings.json`.
 
 ## Safety and recovery
 
