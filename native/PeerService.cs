@@ -10,6 +10,15 @@ using System.Threading;
 
 namespace MonitorHotkeys
 {
+    public static class PeerDiagnostics
+    {
+        static readonly object Sync = new object(); public static readonly string PathName = Path.Combine(ConfigStore.ConfigDirectory, "peer.log");
+        public static void Write(string message)
+        {
+            try { lock (Sync) { Directory.CreateDirectory(ConfigStore.ConfigDirectory); if (File.Exists(PathName) && new FileInfo(PathName).Length > 262144) File.Move(PathName, PathName + ".old", true); File.AppendAllText(PathName, DateTimeOffset.Now.ToString("O") + " " + message.Replace("\r", " ").Replace("\n", " ") + Environment.NewLine); } } catch { }
+        }
+    }
+
     public static class PeerKeyStore
     {
         static readonly string PathName = Path.Combine(ConfigStore.ConfigDirectory, "peer.key");
@@ -61,19 +70,28 @@ namespace MonitorHotkeys
         }
         void Handle(TcpClient client)
         {
-            using (client) try
+            using (client)
             {
-                client.ReceiveTimeout = 35000; client.SendTimeout = 5000; using (NetworkStream stream = client.GetStream()) using (StreamReader reader = new StreamReader(stream, Encoding.UTF8, false, 4096, true)) using (StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(false), 4096, true) { AutoFlush = true })
+                string remote = client.Client.RemoteEndPoint == null ? "unknown" : client.Client.RemoteEndPoint.ToString(); NetworkStream stream = null;
+                try
                 {
-                    string line = reader.ReadLine(); if (line == null || line.Length > 8192) throw new InvalidOperationException("Malformed request."); string[] parts = line.Split(new[] { '|' }, 4); if (parts.Length != 4) throw new InvalidOperationException("Malformed request.");
-                    long timestamp; if (!Int64.TryParse(parts[0], out timestamp) || Math.Abs(DateTimeOffset.UtcNow.ToUnixTimeSeconds() - timestamp) > 30) throw new InvalidOperationException("Expired request.");
-                    lock (seen) { if (!seen.Add(parts[1])) throw new InvalidOperationException("Repeated request."); if (seen.Count > 1000) seen.Clear(); }
-                    string signed = parts[0] + "|" + parts[1] + "|" + parts[2]; if (!FixedEquals(Sign(signed), parts[3])) throw new InvalidOperationException("Authentication failed.");
-                    string command = Encoding.UTF8.GetString(Convert.FromBase64String(parts[2])); string result = commandHandler(command); writer.WriteLine("OK|" + Convert.ToBase64String(Encoding.UTF8.GetBytes(result ?? "OK")));
+                    client.ReceiveTimeout = 55000; client.SendTimeout = 5000; stream = client.GetStream(); using (StreamReader reader = new StreamReader(stream, Encoding.UTF8, false, 4096, true)) using (StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(false), 4096, true) { AutoFlush = true })
+                    {
+                        string line = reader.ReadLine(); if (line == null || line.Length > 8192) throw new InvalidOperationException("Malformed request."); string[] parts = line.Split(new[] { '|' }, 4); if (parts.Length != 4) throw new InvalidOperationException("Malformed request.");
+                        long timestamp; if (!Int64.TryParse(parts[0], out timestamp) || Math.Abs(DateTimeOffset.UtcNow.ToUnixTimeSeconds() - timestamp) > 30) throw new InvalidOperationException("Request expired. Check that both PCs have the correct time.");
+                        lock (seen) { if (!seen.Add(parts[1])) throw new InvalidOperationException("Repeated request rejected."); if (seen.Count > 1000) seen.Clear(); }
+                        string signed = parts[0] + "|" + parts[1] + "|" + parts[2]; if (!FixedEquals(Sign(signed), parts[3])) throw new InvalidOperationException("Authentication failed. The pairing keys do not match.");
+                        string command = Encoding.UTF8.GetString(Convert.FromBase64String(parts[2])); PeerDiagnostics.Write("IN " + remote + " " + CommandName(command)); string result = commandHandler(command); writer.WriteLine("OK|" + Convert.ToBase64String(Encoding.UTF8.GetBytes(result ?? "OK"))); PeerDiagnostics.Write("IN " + remote + " OK");
+                    }
                 }
+                catch (Exception ex)
+                {
+                    PeerDiagnostics.Write("IN " + remote + " ERROR " + ex.Message); try { if (stream != null && stream.CanWrite) using (StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(false), 4096, true) { AutoFlush = true }) writer.WriteLine("ERR|" + ex.Message.Replace('|', '/')); } catch (Exception replyError) { PeerDiagnostics.Write("IN " + remote + " REPLY_ERROR " + replyError.Message); }
+                }
+                finally { if (stream != null) stream.Dispose(); }
             }
-            catch (Exception ex) { try { using (StreamWriter writer = new StreamWriter(client.GetStream()) { AutoFlush = true }) writer.WriteLine("ERR|" + ex.Message.Replace('|', '/')); } catch { } }
         }
+        static string CommandName(string command) { return command.StartsWith("PROFILE:") ? "PROFILE" : command; }
         string Sign(string value) { using (HMACSHA256 hmac = new HMACSHA256(Key())) return Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(value))); }
         static bool FixedEquals(string a, string b)
         {
@@ -86,12 +104,14 @@ namespace MonitorHotkeys
             string timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(); string nonce = Guid.NewGuid().ToString("N"); string payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(command)); string signed = timestamp + "|" + nonce + "|" + payload;
             using (TcpClient client = new TcpClient())
             {
-                if (!client.ConnectAsync(config.PeerHost, config.PeerPort).Wait(4000)) throw new InvalidOperationException("The paired computer did not respond.");
-                client.ReceiveTimeout = 35000; client.SendTimeout = 5000; using (NetworkStream stream = client.GetStream()) using (StreamReader reader = new StreamReader(stream, Encoding.UTF8, false, 4096, true)) using (StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(false), 4096, true) { AutoFlush = true })
+                try { if (!client.ConnectAsync(config.PeerHost, config.PeerPort).Wait(5000)) throw new InvalidOperationException("Connection timed out."); } catch (Exception ex) { PeerDiagnostics.Write("OUT " + config.PeerHost + ":" + config.PeerPort + " CONNECT_ERROR " + ex.GetBaseException().Message); throw new InvalidOperationException("Cannot reach " + config.PeerHost + ":" + config.PeerPort + ". Ensure DisplayCue is running there and allowed through Windows Firewall."); }
+                client.ReceiveTimeout = 55000; client.SendTimeout = 5000; using (NetworkStream stream = client.GetStream()) using (StreamReader reader = new StreamReader(stream, Encoding.UTF8, false, 4096, true)) using (StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(false), 4096, true) { AutoFlush = true })
                 {
-                    writer.WriteLine(signed + "|" + Sign(signed)); string response = reader.ReadLine() ?? "";
-                    if (response.StartsWith("OK|")) return Encoding.UTF8.GetString(Convert.FromBase64String(response.Substring(3)));
-                    throw new InvalidOperationException(response.StartsWith("ERR|") ? response.Substring(4) : "The paired computer returned an invalid response.");
+                    PeerDiagnostics.Write("OUT " + config.PeerHost + ":" + config.PeerPort + " " + CommandName(command)); writer.WriteLine(signed + "|" + Sign(signed)); string response; try { response = reader.ReadLine(); } catch (IOException) { throw new InvalidOperationException(config.PeerHost + " did not finish the request within 55 seconds. See " + PeerDiagnostics.PathName); }
+                    if (response == null) throw new InvalidOperationException(config.PeerHost + " closed the connection before replying. Update DisplayCue on both PCs, then check " + PeerDiagnostics.PathName);
+                    if (response.StartsWith("OK|")) { PeerDiagnostics.Write("OUT " + config.PeerHost + " OK"); try { return Encoding.UTF8.GetString(Convert.FromBase64String(response.Substring(3))); } catch { throw new InvalidOperationException(config.PeerHost + " returned a damaged success response. See " + PeerDiagnostics.PathName); } }
+                    if (response.StartsWith("ERR|")) { PeerDiagnostics.Write("OUT " + config.PeerHost + " ERROR " + response.Substring(4)); throw new InvalidOperationException(config.PeerHost + " reported: " + response.Substring(4)); }
+                    PeerDiagnostics.Write("OUT " + config.PeerHost + " INVALID " + response.Substring(0, Math.Min(120, response.Length))); throw new InvalidOperationException(config.PeerHost + " returned an unsupported response. Ensure both PCs run the same DisplayCue version. See " + PeerDiagnostics.PathName);
                 }
             }
         }

@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 $assembly = Join-Path $PSScriptRoot 'bin\Release\net8.0-windows\win-x64\DisplayCue.dll'
 if (-not (Test-Path $assembly)) { throw 'Build DisplayCue in Release mode before running the peer smoke test.' }
 Add-Type -Path $assembly
-Add-Type 'public static class DisplayCuePeerSmokeHandler { public static string Handle(string command) { return "received:" + command; } }'
+Add-Type 'public static class DisplayCuePeerSmokeHandler { public static string Handle(string command) { if (command == "FAIL") throw new System.InvalidOperationException("intentional failure"); return "received:" + command; } }'
 $oldKey = [MonitorHotkeys.PeerKeyStore]::Get()
 $server = $null
 try {
@@ -20,6 +20,7 @@ try {
   $client = [MonitorHotkeys.PeerService]::new($clientConfig, $handler)
   $reply = $client.Send('PING')
   if ($reply -ne 'received:PING') { throw "Unexpected reply: $reply" }
+  try { $client.Send('FAIL'); throw 'Expected the peer to return an error.' } catch { if ($_.Exception.GetBaseException().Message -notlike '*reported:*intentional failure*') { throw } }
   'Authenticated loopback peer test passed.'
 }
 finally {

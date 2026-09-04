@@ -40,6 +40,8 @@ Install DisplayCue on both PCs. Under **Paired computer**, generate a pairing ke
 
 Each display profile can name a profile to run on the paired computer. DisplayCue applies that remote profile first, waits for it to finish, and only then performs the local DDC and Windows topology changes. Requests are authenticated with HMAC-SHA256, expire after 30 seconds, and include replay-resistant nonces. The pairing key is encrypted for the current Windows user with DPAPI and is never written to `settings.json`.
 
+Connection tests report the paired device and its available profile names. Peer requests and actionable failures are recorded in `%LocalAppData%\DisplayCue\peer.log`; pairing keys and monitor identifiers are never written to that log.
+
 ## Safety and recovery
 
 Before applying a profile, DisplayCue captures the active Windows topology and current input of every affected DDC/CI monitor. If the confirmation countdown expires or **Revert** is selected, both layers are restored.

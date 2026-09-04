@@ -434,7 +434,7 @@ namespace MonitorHotkeys
         public AppController(bool openSettings)
         {
             Config = ConfigStore.Load(); icon = LoadIcon(); menu = new ContextMenuStrip(); tray = new NotifyIcon { Icon = icon, Text = "DisplayCue", Visible = true, ContextMenuStrip = menu }; tray.DoubleClick += delegate { OpenSettings(); };
-            dispatcher = new Control(); dispatcher.CreateControl(); peer = new PeerService(Config, HandlePeerCommand); try { peer.Start(); } catch (Exception ex) { tray.ShowBalloonTip(5000, "DisplayCue peer", ex.Message, ToolTipIcon.Warning); }
+            dispatcher = new Control(); IntPtr dispatcherHandle = dispatcher.Handle; peer = new PeerService(Config, HandlePeerCommand); try { peer.Start(); } catch (Exception ex) { tray.ShowBalloonTip(5000, "DisplayCue peer", ex.Message, ToolTipIcon.Warning); }
             hotkeys = new HotKeyWindow(); hotkeys.Pressed += delegate(int id) { if (id == 1) RunQuickAction(Config.QuickOneProfileId, "Quick action 1"); else if (id == 2) RunQuickAction(Config.QuickTwoProfileId, "Quick action 2"); }; RegisterHotkeys(); RefreshMenu();
             if (openSettings) { System.Windows.Forms.Timer startup = new System.Windows.Forms.Timer(); startup.Interval = 250; startup.Tick += delegate { startup.Stop(); startup.Dispose(); OpenSettings(); }; startup.Start(); }
         }
@@ -458,10 +458,15 @@ namespace MonitorHotkeys
         }
         void OpenSettings() { SettingsForm f = new SettingsForm(this); f.ShowDialog(); RefreshMenu(); }
         public void RestartPeer() { try { peer.Start(); } catch (Exception ex) { throw new InvalidOperationException("The peer listener could not start: " + ex.Message, ex); } }
-        public string TestPeer() { return peer.Send("PING"); }
+        public string TestPeer()
+        {
+            try { return peer.Send("INFO"); }
+            catch (InvalidOperationException ex) { if (ex.Message.IndexOf("closed the connection", StringComparison.OrdinalIgnoreCase) < 0 && ex.Message.IndexOf("unsupported response", StringComparison.OrdinalIgnoreCase) < 0) throw; return peer.Send("PING") + Environment.NewLine + "Connected, but the peer must be updated to show profiles and detailed errors."; }
+        }
         string HandlePeerCommand(string command)
         {
             if (command == "PING") return Config.DeviceName;
+            if (command == "INFO") return Config.DeviceName + Environment.NewLine + "Profiles: " + (Config.Profiles.Count == 0 ? "none" : String.Join(", ", Config.Profiles.Select(x => x.Name)));
             if (!command.StartsWith("PROFILE:")) throw new InvalidOperationException("Unsupported command.");
             string name = command.Substring(8); string result = null; using (ManualResetEventSlim done = new ManualResetEventSlim(false))
             {
