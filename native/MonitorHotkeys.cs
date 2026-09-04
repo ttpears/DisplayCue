@@ -175,14 +175,13 @@ namespace MonitorHotkeys
             RestoreExtended(); Thread.Sleep(1000);
             monitors = GetMonitors(); HashSet<string> wantedKeys = new HashSet<string>(monitors.Where(x => wantedDevices.Contains(x.DevicePath)).Select(x => x.Key));
             if (wantedKeys.Count != wantedDevices.Count) throw new InvalidOperationException("Windows did not make every display in this profile available after restoring the extended desktop.");
-            if (wantedKeys.Count == monitors.Count) return;
             PATH[] active; MODE[] modes; Query(QDC_ONLY_ACTIVE_PATHS, out active, out modes); List<PATH> selected = new List<PATH>();
             foreach (PATH original in active)
             {
                 if (!wantedKeys.Contains(Key(original.targetInfo.adapterId, original.targetInfo.id))) continue;
                 PATH p = original; p.flags |= PATH_ACTIVE; p.sourceInfo.modeInfoIdx = 0xffffffff; p.targetInfo.modeInfoIdx = 0xffffffff; selected.Add(p);
             }
-            if (selected.Count == 0) throw new InvalidOperationException("The requested displays are unavailable.");
+            if (selected.Count != wantedKeys.Count) throw new InvalidOperationException("Windows did not expose every requested display as an active path.");
             int e = SetDisplayConfig((uint)selected.Count, selected.ToArray(), 0, null, SDC_APPLY | SDC_USE_SUPPLIED | SDC_SAVE | SDC_ALLOW);
             if (e != 0) throw new InvalidOperationException("Windows rejected the display profile (error " + e + ").");
         }

@@ -48,6 +48,8 @@ Before applying a profile, DisplayCue captures the active Windows topology and c
 
 When a profile brings monitors back from another computer or input, DisplayCue waits for every expected display to reconnect before asking Windows to extend the desktop. It will fail safely instead of silently applying only part of the profile.
 
+DisplayCue always commits the requested Windows topology, even when DDC switching makes unwanted monitors disappear before Windows has removed their desktop surfaces. This moves windows and the taskbar back onto the displays retained by the profile.
+
 DDC/CI implementations vary by monitor, graphics adapter, dock, and cable. Test a physical input mapping while the monitor controls remain accessible. A read-only compatibility report can be generated with:
 
 ```powershell
