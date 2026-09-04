@@ -42,6 +42,8 @@ Each display profile can name a profile to run on the paired computer. DisplayCu
 
 DDC input changes are also coordinated. Each side reports which monitors it can currently control; if the preferred PC loses DDC access during a handoff, the same change is retried through the other PC. DisplayCue matches physical monitors by EDID fingerprint. If identical monitors cannot be distinguished automatically, enter the same short **Peer ID** (such as `left` or `right`) for that monitor in both PCs' monitor-input settings.
 
+If neither PC can initially reach DDC, DisplayCue applies the verified destination video signals and retries from both sides as the monitors reconnect. An unresolved DDC command no longer destroys an otherwise valid handoff: the confirmation dialog clearly asks the user to verify the picture before keeping or reverting the synchronized topologies.
+
 Requests are authenticated with HMAC-SHA256, expire after 30 seconds, and include replay-resistant nonces and per-handoff transaction IDs. The pairing key is encrypted for the current Windows user with DPAPI and is never written to `settings.json`.
 
 Connection tests report the paired device, available profile names, and current active profile/topology. Peer requests, transition phases, synchronized state, and actionable failures are recorded in `%LocalAppData%\DisplayCue\peer.log`; pairing keys and monitor device paths are never written to that log.

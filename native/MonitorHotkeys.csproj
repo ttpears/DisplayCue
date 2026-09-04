@@ -9,9 +9,9 @@
     <RootNamespace>MonitorHotkeys</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>..\assets\tray-icon-v3.ico</ApplicationIcon>
-    <Version>1.4.0</Version>
-    <AssemblyVersion>1.4.0.0</AssemblyVersion>
-    <FileVersion>1.4.0.0</FileVersion>
+    <Version>1.4.1</Version>
+    <AssemblyVersion>1.4.1.0</AssemblyVersion>
+    <FileVersion>1.4.1.0</FileVersion>
     <Product>DisplayCue</Product>
     <Title>DisplayCue</Title>
     <Description>Switch Windows display layouts quickly from the notification area or a global hotkey.</Description>

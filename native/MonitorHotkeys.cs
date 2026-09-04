@@ -280,12 +280,13 @@ namespace MonitorHotkeys
     public sealed class ConfirmLayoutForm : Form
     {
         readonly Label countdown; readonly System.Windows.Forms.Timer timer; int seconds = 15;
-        public ConfirmLayoutForm(string profileName)
+        public ConfirmLayoutForm(string profileName, string warning = null)
         {
             Text = "Keep display configuration?"; Size = new Size(470, 245); StartPosition = FormStartPosition.Manual; FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; MinimizeBox = false; TopMost = true; BackColor = Theme.Back; ForeColor = Theme.Text; Font = new Font("Segoe UI", 10); DialogResult = DialogResult.No;
             Label title = Theme.Label("Keep this display configuration?", 16, true); title.Location = new Point(28, 25); Controls.Add(title);
             Label description = Theme.Label("Profile: " + profileName, 10, false); description.ForeColor = Theme.Muted; description.Location = new Point(30, 66); Controls.Add(description);
             countdown = Theme.Label("Reverting automatically in 15 seconds", 10, false); countdown.ForeColor = Color.FromArgb(255, 190, 90); countdown.Location = new Point(30, 98); Controls.Add(countdown);
+            if (!String.IsNullOrWhiteSpace(warning)) { countdown.Text = warning + " Reverting automatically in 15 seconds."; countdown.MaximumSize = new Size(400, 40); }
             Button revert = Theme.Button("Revert", false); revert.SetBounds(205, 143, 105, 40); revert.DialogResult = DialogResult.No; Controls.Add(revert);
             Button keep = Theme.Button("Keep", true); keep.SetBounds(325, 143, 105, 40); keep.DialogResult = DialogResult.Yes; Controls.Add(keep); AcceptButton = keep; CancelButton = revert;
             timer = new System.Windows.Forms.Timer(); timer.Interval = 1000; timer.Tick += delegate { seconds--; countdown.Text = "Reverting automatically in " + seconds + " second" + (seconds == 1 ? "" : "s"); if (seconds <= 0) { timer.Stop(); DialogResult = DialogResult.No; Close(); } }; timer.Start();
@@ -697,26 +698,35 @@ namespace MonitorHotkeys
             List<InputRequest> all = local.Concat(remote).ToList(); if (all.Any(x => String.IsNullOrWhiteSpace(x.PhysicalId) || x.PhysicalId == "?")) throw new InvalidOperationException("A DDC monitor has no shared identity. Re-save its monitor-input settings or enter the same Peer ID on both PCs.");
             foreach (IGrouping<string, InputRequest> group in all.GroupBy(x => x.PhysicalId, StringComparer.OrdinalIgnoreCase)) if (group.Select(x => x.Input).Distinct().Count() > 1) throw new InvalidOperationException("The paired profiles request different inputs for monitor '" + group.Key + "'. Make the two profiles agree before switching.");
         }
-        void ResolveInputFailures(List<InputRequest> localFailures, List<InputRequest> remoteFailures, ProfileTransition local, string id)
+        List<InputRequest> ResolveInputFailures(List<InputRequest> localFailures, List<InputRequest> remoteFailures, ProfileTransition local, string id)
         {
-            foreach (InputRequest request in localFailures) peer.Send("TX|SETINPUT|" + id + "|" + request.PhysicalId + "|" + request.Input);
-            foreach (InputRequest request in remoteFailures) SetInputByPhysicalId(request.PhysicalId, request.Input, local);
+            List<InputRequest> unresolved = new List<InputRequest>();
+            foreach (InputRequest request in localFailures) try { peer.Send("TX|SETINPUT|" + id + "|" + request.PhysicalId + "|" + request.Input); } catch { unresolved.Add(request); }
+            foreach (InputRequest request in remoteFailures) try { SetInputByPhysicalId(request.PhysicalId, request.Input, local); } catch { unresolved.Add(request); }
+            return DistinctInputs(unresolved);
         }
-        void ResolveRollbackFailures(List<InputRequest> localFailures, List<InputRequest> remoteFailures, string id)
+        List<InputRequest> RetryInputsAfterSignals(List<InputRequest> unresolved, ProfileTransition local, string id)
         {
-            foreach (InputRequest request in localFailures) peer.Send("TX|FORCEINPUT|" + id + "|" + request.PhysicalId + "|" + request.Input);
-            foreach (InputRequest request in remoteFailures) SetInputByPhysicalId(request.PhysicalId, request.Input, null);
+            List<InputRequest> remaining = new List<InputRequest>();
+            foreach (InputRequest request in DistinctInputs(unresolved))
+            {
+                try { SetInputByPhysicalId(request.PhysicalId, request.Input, local); continue; } catch { }
+                try { peer.Send("TX|SETINPUT|" + id + "|" + request.PhysicalId + "|" + request.Input); } catch { remaining.Add(request); }
+            }
+            return remaining;
         }
+        static List<InputRequest> DistinctInputs(IEnumerable<InputRequest> requests) { return requests.GroupBy(x => x.PhysicalId + ":" + x.Input, StringComparer.OrdinalIgnoreCase).Select(x => x.First()).ToList(); }
         void RollbackCoordinated(ProfileTransition local, string id, bool peerBegun)
         {
-            try
-            {
-                ReleaseToward(local.PreviousDisplays); if (peerBegun) peer.Send("TX|ROLLBACK_RELEASE|" + id);
-                List<InputRequest> localFailed = TryApplyInputs(local.PreviousInputs, null); List<InputRequest> remoteFailed = peerBegun ? DecodeInputRequests(peer.Send("TX|ROLLBACK_INPUTS|" + id)) : new List<InputRequest>();
-                if (peerBegun) ResolveRollbackFailures(localFailed, remoteFailed, id); else if (localFailed.Count > 0) throw new InvalidOperationException("A monitor input could not be restored.");
-                ApplyPreviousTopology(local); if (peerBegun) { peer.Send("TX|ROLLBACK_APPLY|" + id); peer.Send("TX|ROLLBACK_DONE|" + id); }
-            }
-            catch (Exception ex) { PeerDiagnostics.Write("TX " + id + " ROLLBACK_ERROR " + ex.Message); }
+            try { ReleaseToward(local.PreviousDisplays); } catch (Exception ex) { PeerDiagnostics.Write("TX " + id + " LOCAL_ROLLBACK_RELEASE_ERROR " + ex.Message); }
+            if (peerBegun) try { peer.Send("TX|ROLLBACK_RELEASE|" + id); } catch (Exception ex) { PeerDiagnostics.Write("TX " + id + " PEER_ROLLBACK_RELEASE_ERROR " + ex.Message); }
+            List<InputRequest> localFailed = new List<InputRequest>(), remoteFailed = new List<InputRequest>();
+            try { localFailed = TryApplyInputs(local.PreviousInputs, null); } catch (Exception ex) { PeerDiagnostics.Write("TX " + id + " LOCAL_ROLLBACK_DDC_ERROR " + ex.Message); }
+            if (peerBegun) try { remoteFailed = DecodeInputRequests(peer.Send("TX|ROLLBACK_INPUTS|" + id)); } catch (Exception ex) { PeerDiagnostics.Write("TX " + id + " PEER_ROLLBACK_DDC_ERROR " + ex.Message); }
+            foreach (InputRequest request in localFailed) if (peerBegun) try { peer.Send("TX|FORCEINPUT|" + id + "|" + request.PhysicalId + "|" + request.Input); } catch { }
+            foreach (InputRequest request in remoteFailed) try { SetInputByPhysicalId(request.PhysicalId, request.Input, null); } catch { }
+            try { ApplyPreviousTopology(local); } catch (Exception ex) { PeerDiagnostics.Write("TX " + id + " LOCAL_ROLLBACK_APPLY_ERROR " + ex.Message); }
+            if (peerBegun) { try { peer.Send("TX|ROLLBACK_APPLY|" + id); } catch (Exception ex) { PeerDiagnostics.Write("TX " + id + " PEER_ROLLBACK_APPLY_ERROR " + ex.Message); } try { peer.Send("TX|ROLLBACK_DONE|" + id); } catch { } }
         }
         void RecoverAbandonedInbound(ProfileTransition transition)
         {
@@ -742,9 +752,10 @@ namespace MonitorHotkeys
                 {
                     peerBegun = true; string remoteBefore = peer.Send("TX|BEGIN|" + id + "|" + encodedProfile); List<InputRequest> remotePlan = DecodeInputRequests(peer.Send("TX|PLAN|" + id)); ValidateCombinedInputPlan(PlannedInputs(local.Profile), remotePlan); PeerDiagnostics.Write("TX " + id + " SYNC local=" + CurrentState() + "; " + CurrentDdcState() + " remote=" + remoteBefore);
                     ReleaseTransition(local); peer.Send("TX|RELEASE|" + id);
-                    List<InputRequest> localInputFailures = ApplyTransitionInputs(local); List<InputRequest> remoteInputFailures = DecodeInputRequests(peer.Send("TX|INPUTS|" + id)); ResolveInputFailures(localInputFailures, remoteInputFailures, local, id);
-                    ApplyTransitionFinal(local); string remoteAfter = peer.Send("TX|APPLY|" + id); PeerDiagnostics.Write("TX " + id + " VERIFIED local=" + CurrentState() + " remote=" + remoteAfter);
-                    using (ConfirmLayoutForm confirm = new ConfirmLayoutForm(p.Name + " + " + p.PeerProfileName))
+                    List<InputRequest> localInputFailures = ApplyTransitionInputs(local); List<InputRequest> remoteInputFailures = DecodeInputRequests(peer.Send("TX|INPUTS|" + id)); List<InputRequest> unresolved = ResolveInputFailures(localInputFailures, remoteInputFailures, local, id);
+                    ApplyTransitionFinal(local); string remoteAfter = peer.Send("TX|APPLY|" + id); if (unresolved.Count > 0) unresolved = RetryInputsAfterSignals(unresolved, local, id); PeerDiagnostics.Write("TX " + id + " VERIFIED local=" + CurrentState() + " remote=" + remoteAfter + " unresolved_ddc=" + unresolved.Count);
+                    string warning = unresolved.Count == 0 ? null : "DDC was unavailable for " + unresolved.Count + " monitor" + (unresolved.Count == 1 ? "." : "s.") + " Verify the picture.";
+                    using (ConfirmLayoutForm confirm = new ConfirmLayoutForm(p.Name + " + " + p.PeerProfileName, warning))
                     {
                         if (confirm.ShowDialog() == DialogResult.Yes) { peer.Send("TX|COMMIT|" + id); DesktopRecovery.BringWindowsIntoView(); }
                         else RollbackCoordinated(local, id, true);
