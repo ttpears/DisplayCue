@@ -141,7 +141,9 @@ namespace MonitorHotkeys
                 using (RegistryKey key = Registry.LocalMachine.OpenSubKey(keyPath))
                 {
                     byte[] edid = key == null ? null : key.GetValue("EDID") as byte[]; if (edid == null || edid.Length < 128) return "";
-                    using (SHA256 sha = SHA256.Create()) return Convert.ToBase64String(sha.ComputeHash(edid)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+                    List<byte> identity = new List<byte>(); identity.AddRange(edid.Skip(8).Take(8));
+                    for (int offset = 54; offset + 18 <= 126; offset += 18) if (edid[offset] == 0 && edid[offset + 1] == 0 && edid[offset + 3] == 0xff) identity.AddRange(edid.Skip(offset + 5).Take(13));
+                    using (SHA256 sha = SHA256.Create()) return "edid1-" + Convert.ToBase64String(sha.ComputeHash(identity.ToArray())).TrimEnd('=').Replace('+', '-').Replace('/', '_');
                 }
             }
             catch { return ""; }

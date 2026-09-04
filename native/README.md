@@ -9,7 +9,7 @@ This directory contains the compiled Windows application that replaces the Power
 - `AppController` owns the notification-area icon, menus, global hotkeys and application lifetime.
 - `PeerService` transports authenticated local-network state and transaction phases. Pairing keys are encrypted for the current Windows user with DPAPI.
 - `SettingsForm` manages arbitrary display profiles and two assignable quick-action hotkeys. Each profile may include physical monitor input assignments.
-- Paired profile changes synchronize live topology and DDC reachability, release shared screens before switching their inputs, verify both final states, and roll both PCs back after 15 seconds unless confirmed.
+- Paired profile changes synchronize live topology and DDC reachability, release shared screens before switching their inputs, verify both final states, and commit automatically. A failed required phase rolls both PCs back.
 - Configuration is stored under `%LocalAppData%\DisplayCue`. The app imports earlier DisplayCue and prototype settings on first launch.
 
 ## Local legacy build

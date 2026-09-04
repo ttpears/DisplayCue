@@ -20,7 +20,7 @@ This separation allows local profiles to work without networking and prevents a 
 3. Reduce each desktop to the displays it keeps through the transition, so a computer releases shared screens before their inputs move.
 4. Apply each DDC change through the currently reachable peer, retrying through the other peer when the first route disappears.
 5. Apply and verify both final Windows topologies.
-6. Commit after user confirmation, or restore both captured states—including cross-peer DDC fallback—if a required action fails or times out.
+6. Commit automatically after every required peer verifies its exact target topology, or restore both captured states—including cross-peer DDC fallback—if a required action fails or times out.
 
 Transactions use unique identifiers and expire automatically. Repeated commit and rollback messages must be idempotent.
 

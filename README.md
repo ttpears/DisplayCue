@@ -9,7 +9,7 @@ DisplayCue is a lightweight Windows tray application for switching display layou
 - Identify active monitors with large numbered overlays.
 - Control HDMI and DisplayPort inputs on monitors that advertise DDC/CI input-source support.
 - Coordinate profiles with a paired Windows PC before switching local monitor inputs.
-- Restore the previous Windows topology and monitor inputs automatically unless a new profile is confirmed within 15 seconds.
+- Confirm standalone local profile changes within 15 seconds; verified paired scenes commit automatically and roll both PCs back on failure.
 - Run entirely on the local computer without accounts, analytics, telemetry, or cloud services.
 
 DisplayCue supports a variable number and type of displays. A profile may contain one screen, several monitors, a projector, a TV, or every connected display.
@@ -38,11 +38,11 @@ The two quick actions can have global hotkeys. Additional profiles remain availa
 
 Install DisplayCue on both PCs. Under **Paired computer**, generate a pairing key on one PC and paste the same key on the other. Enter the other computer's hostname or private IP address, enable peer control, allow DisplayCue on private networks if Windows Firewall asks, and use **Test connection**.
 
-Each display profile can name a profile to run on the paired computer. DisplayCue reads the live topology on both PCs and performs the pair as one coordinated transition: both sides prepare, the PC giving up screens releases its Windows desktop, monitor inputs switch, and both sides apply and verify their final profiles. The transition is committed only after confirmation; a failure asks both PCs to restore the state they captured at the start. This ordering works in either handoff direction and avoids two computers fighting over the same screens.
+Each display profile can name a profile to run on the paired computer. DisplayCue reads the live topology on both PCs and performs the pair as one coordinated transition: both sides prepare, the PC giving up screens releases its Windows desktop, monitor inputs switch, and both sides apply and verify their final profiles. The transition commits automatically only after both target topologies verify; a failure asks both PCs to restore the state they captured at the start. This ordering works in either handoff direction and avoids two computers fighting over the same screens.
 
 DDC input changes are also coordinated. Each side reports which monitors it can currently control; if the preferred PC loses DDC access during a handoff, the same change is retried through the other PC. DisplayCue matches physical monitors by EDID fingerprint. If identical monitors cannot be distinguished automatically, enter the same short **Peer ID** (such as `left` or `right`) for that monitor in both PCs' monitor-input settings.
 
-If neither PC can initially reach DDC, DisplayCue applies the verified destination video signals and retries from both sides as the monitors reconnect. An unresolved DDC command no longer destroys an otherwise valid handoff: the confirmation dialog clearly asks the user to verify the picture before keeping or reverting the synchronized topologies.
+If neither PC can initially reach DDC, DisplayCue applies the verified destination video signals and retries from both sides as the monitors reconnect. An unresolved optional DDC command no longer destroys an otherwise valid handoff. Once both computers verify their exact target topology, the synchronized scene commits automatically and reports any remaining DDC limitation in a notification.
 
 Requests are authenticated with HMAC-SHA256, expire after 30 seconds, and include replay-resistant nonces and per-handoff transaction IDs. The pairing key is encrypted for the current Windows user with DPAPI and is never written to `settings.json`.
 
@@ -50,9 +50,9 @@ Connection tests report the paired device, available profile names, and current 
 
 ## Safety and recovery
 
-Before applying a profile, DisplayCue captures the active Windows topology and current input of every affected DDC/CI monitor. If the confirmation countdown expires or **Revert** is selected, both layers are restored.
+Before applying a profile, DisplayCue captures the active Windows topology and current input of every affected DDC/CI monitor. Standalone local changes retain the **Keep/Revert** countdown. Paired scenes use two-sided verification and automatically restore both machines when a required phase fails.
 
-The confirmation dialog is placed on the newly active primary display. After you choose **Keep**, application windows that are entirely outside the remaining desktop are brought back into view. DisplayCue also verifies that Windows actually activated exactly the displays saved in the profile.
+For standalone profiles, the confirmation dialog is placed on the newly active primary display. After a local profile is kept—or a paired scene verifies—application windows entirely outside the remaining desktop are brought back into view.
 
 When a profile brings monitors back from another computer or input, DisplayCue waits for every expected display to reconnect before asking Windows to extend the desktop. It will fail safely instead of silently applying only part of the profile.
 

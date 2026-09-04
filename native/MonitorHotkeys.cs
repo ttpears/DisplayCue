@@ -661,7 +661,7 @@ namespace MonitorHotkeys
         void SetInputByPhysicalId(string physicalId, uint input, ProfileTransition capture)
         {
             if (String.IsNullOrWhiteSpace(physicalId) || physicalId == "?") throw new InvalidOperationException("The monitor has no shared physical identity, so DDC fallback cannot safely select it.");
-            DateTime deadline = DateTime.UtcNow.AddSeconds(8); string lastError = null;
+            DateTime deadline = DateTime.UtcNow.AddSeconds(3); string lastError = null;
             do
             {
                 List<DdcMonitorInfo> ddc = DdcEngine.Discover(); try
@@ -688,7 +688,7 @@ namespace MonitorHotkeys
         void EnrichInputIdentities(DisplayProfile profile)
         {
             if (profile.MonitorInputs == null || profile.MonitorInputs.Count == 0) return; List<DdcMonitorInfo> ddc = DdcEngine.Discover(); bool changed = false;
-            try { foreach (MonitorInputAssignment assignment in profile.MonitorInputs) { if (!String.IsNullOrWhiteSpace(assignment.PhysicalId)) continue; DdcMonitorInfo monitor = ddc.FirstOrDefault(x => x.DevicePath.Equals(assignment.DevicePath, StringComparison.OrdinalIgnoreCase)); if (monitor != null && !String.IsNullOrWhiteSpace(monitor.PhysicalId)) { assignment.PhysicalId = monitor.PhysicalId; changed = true; } } }
+            try { foreach (MonitorInputAssignment assignment in profile.MonitorInputs) { if (!String.IsNullOrWhiteSpace(assignment.PhysicalId) && assignment.PhysicalId.StartsWith("edid1-")) continue; DdcMonitorInfo monitor = ddc.FirstOrDefault(x => x.DevicePath.Equals(assignment.DevicePath, StringComparison.OrdinalIgnoreCase)); if (monitor != null && !String.IsNullOrWhiteSpace(monitor.PhysicalId)) { assignment.PhysicalId = monitor.PhysicalId; changed = true; } } }
             finally { DdcEngine.Release(ddc); }
             if (changed) ConfigStore.Save(Config);
         }
@@ -700,10 +700,7 @@ namespace MonitorHotkeys
         }
         List<InputRequest> ResolveInputFailures(List<InputRequest> localFailures, List<InputRequest> remoteFailures, ProfileTransition local, string id)
         {
-            List<InputRequest> unresolved = new List<InputRequest>();
-            foreach (InputRequest request in localFailures) try { peer.Send("TX|SETINPUT|" + id + "|" + request.PhysicalId + "|" + request.Input); } catch { unresolved.Add(request); }
-            foreach (InputRequest request in remoteFailures) try { SetInputByPhysicalId(request.PhysicalId, request.Input, local); } catch { unresolved.Add(request); }
-            return DistinctInputs(unresolved);
+            return DistinctInputs(localFailures.Concat(remoteFailures));
         }
         List<InputRequest> RetryInputsAfterSignals(List<InputRequest> unresolved, ProfileTransition local, string id)
         {
@@ -754,12 +751,8 @@ namespace MonitorHotkeys
                     ReleaseTransition(local); peer.Send("TX|RELEASE|" + id);
                     List<InputRequest> localInputFailures = ApplyTransitionInputs(local); List<InputRequest> remoteInputFailures = DecodeInputRequests(peer.Send("TX|INPUTS|" + id)); List<InputRequest> unresolved = ResolveInputFailures(localInputFailures, remoteInputFailures, local, id);
                     ApplyTransitionFinal(local); string remoteAfter = peer.Send("TX|APPLY|" + id); if (unresolved.Count > 0) unresolved = RetryInputsAfterSignals(unresolved, local, id); PeerDiagnostics.Write("TX " + id + " VERIFIED local=" + CurrentState() + " remote=" + remoteAfter + " unresolved_ddc=" + unresolved.Count);
-                    string warning = unresolved.Count == 0 ? null : "DDC was unavailable for " + unresolved.Count + " monitor" + (unresolved.Count == 1 ? "." : "s.") + " Verify the picture.";
-                    using (ConfirmLayoutForm confirm = new ConfirmLayoutForm(p.Name + " + " + p.PeerProfileName, warning))
-                    {
-                        if (confirm.ShowDialog() == DialogResult.Yes) { peer.Send("TX|COMMIT|" + id); DesktopRecovery.BringWindowsIntoView(); }
-                        else RollbackCoordinated(local, id, true);
-                    }
+                    peer.Send("TX|COMMIT|" + id); DesktopRecovery.BringWindowsIntoView();
+                    if (unresolved.Count > 0) tray.ShowBalloonTip(5000, "DisplayCue", "The synchronized display scene was applied, but " + unresolved.Count + " optional DDC input command" + (unresolved.Count == 1 ? " was" : "s were") + " unavailable.", ToolTipIcon.Warning);
                 }
                 catch { RollbackCoordinated(local, id, peerBegun); throw; }
                 finally { activeTransitionId = null; }
