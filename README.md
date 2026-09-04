@@ -46,6 +46,8 @@ Connection tests report the paired device and its available profile names. Peer 
 
 Before applying a profile, DisplayCue captures the active Windows topology and current input of every affected DDC/CI monitor. If the confirmation countdown expires or **Revert** is selected, both layers are restored.
 
+The confirmation dialog is placed on the newly active primary display. After you choose **Keep**, application windows that are entirely outside the remaining desktop are brought back into view. DisplayCue also verifies that Windows actually activated exactly the displays saved in the profile.
+
 When a profile brings monitors back from another computer or input, DisplayCue waits for every expected display to reconnect before asking Windows to extend the desktop. It will fail safely instead of silently applying only part of the profile.
 
 DisplayCue always commits the requested Windows topology, even when DDC switching makes unwanted monitors disappear before Windows has removed their desktop surfaces. This moves windows and the taskbar back onto the displays retained by the profile.

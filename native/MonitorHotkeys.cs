@@ -184,6 +184,41 @@ namespace MonitorHotkeys
             if (selected.Count != wantedKeys.Count) throw new InvalidOperationException("Windows did not expose every requested display as an active path.");
             int e = SetDisplayConfig((uint)selected.Count, selected.ToArray(), 0, null, SDC_APPLY | SDC_USE_SUPPLIED | SDC_SAVE | SDC_ALLOW);
             if (e != 0) throw new InvalidOperationException("Windows rejected the display profile (error " + e + ").");
+            Thread.Sleep(750);
+            HashSet<string> actual = new HashSet<string>(GetMonitors().Where(x => x.Active).Select(x => x.DevicePath), StringComparer.OrdinalIgnoreCase);
+            if (!actual.SetEquals(wantedDevices)) throw new InvalidOperationException("Windows did not finish applying the requested display profile.");
+        }
+    }
+
+    public static class DesktopRecovery
+    {
+        delegate bool EnumWindowsProc(IntPtr window, IntPtr parameter);
+        [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
+        [StructLayout(LayoutKind.Sequential)] struct WINDOWPLACEMENT { public int length, flags, showCmd; public Point minPosition, maxPosition; public RECT normalPosition; }
+        [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
+        [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+        [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr window);
+        [DllImport("user32.dll")] static extern bool GetWindowPlacement(IntPtr window, ref WINDOWPLACEMENT placement);
+        [DllImport("user32.dll")] static extern bool SetWindowPlacement(IntPtr window, ref WINDOWPLACEMENT placement);
+
+        public static void BringWindowsIntoView()
+        {
+            Screen primary = Screen.PrimaryScreen; if (primary == null) return;
+            Rectangle destination = primary.WorkingArea; Rectangle[] visibleAreas = Screen.AllScreens.Select(x => x.WorkingArea).ToArray();
+            EnumWindows(delegate(IntPtr window, IntPtr parameter)
+            {
+                if (!IsWindowVisible(window) || GetWindowTextLength(window) == 0) return true;
+                WINDOWPLACEMENT placement = new WINDOWPLACEMENT(); placement.length = Marshal.SizeOf(typeof(WINDOWPLACEMENT));
+                if (!GetWindowPlacement(window, ref placement)) return true;
+                RECT r = placement.normalPosition; Rectangle normal = Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
+                if (normal.Width <= 0 || normal.Height <= 0 || visibleAreas.Any(x => Rectangle.Intersect(x, normal).Width >= 40 && Rectangle.Intersect(x, normal).Height >= 40)) return true;
+                int width = Math.Min(Math.Max(normal.Width, 320), destination.Width); int height = Math.Min(Math.Max(normal.Height, 180), destination.Height);
+                int offset = Math.Abs(window.ToInt64().GetHashCode()) % 80;
+                placement.normalPosition.Left = destination.Left + Math.Min(40 + offset, Math.Max(0, destination.Width - width));
+                placement.normalPosition.Top = destination.Top + Math.Min(40 + offset, Math.Max(0, destination.Height - height));
+                placement.normalPosition.Right = placement.normalPosition.Left + width; placement.normalPosition.Bottom = placement.normalPosition.Top + height;
+                SetWindowPlacement(window, ref placement); return true;
+            }, IntPtr.Zero);
         }
     }
 
@@ -226,7 +261,7 @@ namespace MonitorHotkeys
         readonly Label countdown; readonly System.Windows.Forms.Timer timer; int seconds = 15;
         public ConfirmLayoutForm(string profileName)
         {
-            Text = "Keep display configuration?"; Size = new Size(470, 245); StartPosition = FormStartPosition.CenterScreen; FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; MinimizeBox = false; TopMost = true; BackColor = Theme.Back; ForeColor = Theme.Text; Font = new Font("Segoe UI", 10); DialogResult = DialogResult.No;
+            Text = "Keep display configuration?"; Size = new Size(470, 245); StartPosition = FormStartPosition.Manual; FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; MinimizeBox = false; TopMost = true; BackColor = Theme.Back; ForeColor = Theme.Text; Font = new Font("Segoe UI", 10); DialogResult = DialogResult.No;
             Label title = Theme.Label("Keep this display configuration?", 16, true); title.Location = new Point(28, 25); Controls.Add(title);
             Label description = Theme.Label("Profile: " + profileName, 10, false); description.ForeColor = Theme.Muted; description.Location = new Point(30, 66); Controls.Add(description);
             countdown = Theme.Label("Reverting automatically in 15 seconds", 10, false); countdown.ForeColor = Color.FromArgb(255, 190, 90); countdown.Location = new Point(30, 98); Controls.Add(countdown);
@@ -234,6 +269,7 @@ namespace MonitorHotkeys
             Button keep = Theme.Button("Keep", true); keep.SetBounds(325, 143, 105, 40); keep.DialogResult = DialogResult.Yes; Controls.Add(keep); AcceptButton = keep; CancelButton = revert;
             timer = new System.Windows.Forms.Timer(); timer.Interval = 1000; timer.Tick += delegate { seconds--; countdown.Text = "Reverting automatically in " + seconds + " second" + (seconds == 1 ? "" : "s"); if (seconds <= 0) { timer.Stop(); DialogResult = DialogResult.No; Close(); } }; timer.Start();
         }
+        protected override void OnShown(EventArgs e) { Screen screen = Screen.PrimaryScreen; if (screen != null) { Rectangle area = screen.WorkingArea; Location = new Point(area.Left + Math.Max(0, (area.Width - Width) / 2), area.Top + Math.Max(0, (area.Height - Height) / 2)); } Activate(); BringToFront(); base.OnShown(e); }
         protected override void OnFormClosed(FormClosedEventArgs e) { timer.Stop(); timer.Dispose(); base.OnFormClosed(e); }
     }
 
@@ -538,7 +574,11 @@ namespace MonitorHotkeys
         }
         void ConfirmOrRollback(List<string> previousDisplays, List<MonitorInputAssignment> previousInputs, string name)
         {
-            using (ConfirmLayoutForm confirm = new ConfirmLayoutForm(name)) if (confirm.ShowDialog() != DialogResult.Yes) try { ApplyMonitorInputs(previousInputs); DisplayEngine.ApplyDevicePaths(previousDisplays); } catch { }
+            using (ConfirmLayoutForm confirm = new ConfirmLayoutForm(name))
+            {
+                if (confirm.ShowDialog() == DialogResult.Yes) DesktopRecovery.BringWindowsIntoView();
+                else try { ApplyMonitorInputs(previousInputs); DisplayEngine.ApplyDevicePaths(previousDisplays); } catch { }
+            }
         }
         public void Identify()
         {
