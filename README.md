@@ -2,6 +2,8 @@
 
 DisplayCue is a lightweight Windows tray application for switching display layouts and physical monitor inputs.
 
+Field notes: [Switching two monitors between two Windows PCs](https://hackyourworld.com/displaycue-two-pc-monitor-input-switching/) explains the DDC/CI handoff, rollback timer, and paired-PC coordination behind the current design.
+
 ## Features
 
 - Save any number of named display profiles, from one display to an entire desk.
