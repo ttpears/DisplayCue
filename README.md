@@ -2,7 +2,7 @@
 
 DisplayCue is a lightweight Windows tray application for switching display layouts and physical monitor inputs.
 
-Field notes: [Switching two monitors between two Windows PCs](https://hackyourworld.com/displaycue-two-pc-monitor-input-switching/) explains the DDC/CI handoff, rollback timer, and paired-PC coordination behind the current design.
+Start with the [step-by-step setup guide](docs/HOME-OFFICE-SETUP.md) to save layouts, share monitors between two PCs, and enable automatic docking.
 
 ## Features
 
@@ -64,7 +64,7 @@ For automatic home return, select a dock connection that disappears when you unp
 
 **Leave monitors on desktop this session** returns the previous state when Undo is available, or requests the configured desktop return. Automatic takeover stays suppressed until the dock is disconnected. Automation is off until explicitly enabled; both apps must be running.
 
-See [the Home/Office setup guide](docs/HOME-OFFICE-SETUP.md) for mixed HDMI/DisplayPort connections and a laptop + two G5s / desktop + TV workflow.
+See [the setup guide](docs/HOME-OFFICE-SETUP.md) for connection planning, the profiles to create on each PC, manual recovery tests, and automatic desk rules.
 
 ## Safety and recovery
 
@@ -82,7 +82,7 @@ DDC/CI implementations vary by monitor, graphics adapter, dock, and cable. Test 
 DisplayCue.exe --ddc-report ddc-report.txt
 ```
 
-The report contains monitor identifiers and capabilities but no application settings or user data.
+The report contains monitor identifiers and capabilities. Review it before sharing it publicly.
 
 ## Build
 

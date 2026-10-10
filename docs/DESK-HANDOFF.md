@@ -62,6 +62,6 @@ Automatic matching uses a fingerprint of the monitor EDID, including its hardwar
 
 DisplayCue must never claim a scene is fully automatic until both directions and the rollback path have succeeded.
 
-## Tested development setup
+## Hardware compatibility
 
-Two Samsung Odyssey G5 G51F displays reported MCCS 2.1 and input-source VCP `0x60` with HDMI 1 (`0x11`), HDMI 2 (`0x12`), and DisplayPort 1 (`0x0F`). Both continued accepting read and set commands from the desktop after switching away from the desktop input, allowing that desktop to act as a permanent controller. These results describe the development hardware only and are not hard-coded product assumptions.
+Input control must be tested for each monitor, cable, graphics adapter, and dock combination. An advertised input value does not guarantee that the monitor can be controlled after changing inputs. Use the [setup guide](HOME-OFFICE-SETUP.md) to verify both handoff directions and recovery before enabling automatic switching.
