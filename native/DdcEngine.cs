@@ -112,8 +112,17 @@ namespace MonitorHotkeys
         public static void SetInput(DdcMonitorInfo monitor, uint value)
         {
             if (monitor == null || monitor.Handle == IntPtr.Zero) throw new InvalidOperationException("The monitor is no longer available for DDC/CI control.");
+            if (!monitor.Inputs.Any(x => x.Value == value)) throw new InvalidOperationException("The monitor does not advertise input " + InputName(value) + ".");
             if (!SetVCPFeature(monitor.Handle, InputSourceVcp, value)) throw new InvalidOperationException("The monitor rejected input " + InputName(value) + " (Windows error " + Marshal.GetLastWin32Error() + ").");
             monitor.CurrentInput = value;
+        }
+
+        public static uint ReadInput(DdcMonitorInfo monitor)
+        {
+            uint type, current, maximum;
+            if (monitor == null || monitor.Handle == IntPtr.Zero || !GetVCPFeatureAndVCPFeatureReply(monitor.Handle, InputSourceVcp, out type, out current, out maximum))
+                throw new InvalidOperationException("The monitor input could not be verified through DDC/CI.");
+            monitor.CurrentInput = current; return current;
         }
 
         public static string InputName(uint value)

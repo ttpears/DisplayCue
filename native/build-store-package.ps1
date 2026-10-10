@@ -8,12 +8,17 @@ $ErrorActionPreference = 'Stop'
 $project = Join-Path $PSScriptRoot 'MonitorHotkeys.csproj'
 $publish = Join-Path $Output 'layout'
 $assetOutput = Join-Path $publish 'Assets'
-$packageVersion = '1.4.0.0'
+[xml]$projectMetadata = Get-Content -LiteralPath $project
+$packageVersion = $projectMetadata.Project.PropertyGroup.AssemblyVersion
 $msix = Join-Path $Output "DisplayCue_${packageVersion}_x64.msix"
 
-Remove-Item -LiteralPath $Output -Recurse -Force -ErrorAction SilentlyContinue
+$resolvedOutput = [IO.Path]::GetFullPath($Output)
+$artifactsRoot = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $PSScriptRoot) 'artifacts'))
+if (-not $resolvedOutput.StartsWith($artifactsRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Store output must be a subdirectory of this repository''s artifacts directory.' }
+if (Test-Path -LiteralPath $resolvedOutput) { Remove-Item -LiteralPath $resolvedOutput -Recurse -Force }
 New-Item -ItemType Directory -Path $publish -Force | Out-Null
 dotnet publish $project -c $Configuration -r $Runtime --self-contained true --no-restore -o $publish
+if ($LASTEXITCODE -ne 0) { throw "DisplayCue publish failed with exit code $LASTEXITCODE." }
 
 & (Join-Path $PSScriptRoot 'generate-package-assets.ps1') -Destination $assetOutput
 Copy-Item (Join-Path $PSScriptRoot 'Package.appxmanifest') (Join-Path $publish 'AppxManifest.xml')
