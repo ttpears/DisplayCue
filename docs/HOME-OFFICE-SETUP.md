@@ -92,11 +92,11 @@ These example names can be copied exactly. You may rename them, but the paired-p
 
 DisplayCue initially discovers monitor-input controls through active screens. Save their input assignments **before** capturing a smaller layout:
 
-1. With the desktop's shared screens active, create `Desktop parked`.
+1. Use the monitor buttons to show the desktop and enable its shared screens in Windows. Then create `Desktop parked`.
 2. In **Monitor inputs**, select the **laptop inputs** for the shared monitors and use their existing Peer IDs. Choose **Use these inputs**. For this initial save, select the currently active screens and capture their layout. Leave the paired-profile field blank, then save. Do not apply this temporary profile.
 3. Close DisplayCue Settings. In Windows Display settings, disconnect the shared screens from the desktop's layout, keeping its private screen(s) active. Leave the cables plugged in.
 4. Reopen DisplayCue Settings, select `Desktop parked`, choose **Capture current layout**, and save again. Keep the previously saved monitor-input assignments, even if the shared monitors are now unavailable in the input editor.
-5. On the laptop, repeat this process for `Home desktop`: first save assignments pointing to the **desktop inputs** while the shared screens are active, then capture a layout with only the built-in screen active.
+5. Use the monitor buttons to show the laptop and enable its shared screens in Windows. Repeat this process for `Home desktop`: first save assignments pointing to the **desktop inputs** while the shared screens are active, then capture a layout with only the built-in screen active.
 6. Set `Home desktop`'s paired-profile field to `Desktop desk` and save.
 
 For each destination, both PCs' profiles must agree on the input for every shared monitor. For example, `Home laptop` and `Desktop parked` both select the laptop's inputs.
