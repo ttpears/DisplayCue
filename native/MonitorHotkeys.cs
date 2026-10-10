@@ -565,7 +565,7 @@ namespace MonitorHotkeys
             StartAutomation();
             if (openSettings) { System.Windows.Forms.Timer startup = new System.Windows.Forms.Timer(); startup.Interval = 250; startup.Tick += delegate { startup.Stop(); startup.Dispose(); OpenSettings(); }; startup.Start(); }
         }
-        Icon LoadIcon() { string p = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tray-icon.ico"); return File.Exists(p) ? new Icon(p) : SystemIcons.Application; }
+        Icon LoadIcon() { string p = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tray-icon.ico"); return File.Exists(p) ? new Icon(p) : Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application; }
         public void RefreshMenu()
         {
             menu.Items.Clear(); ToolStripMenuItem profiles = new ToolStripMenuItem("Display profiles");

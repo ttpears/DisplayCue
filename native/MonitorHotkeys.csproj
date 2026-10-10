@@ -26,6 +26,6 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
   <ItemGroup>
-    <None Include="..\assets\tray-icon-v3.ico" Link="tray-icon.ico" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\assets\tray-icon-v3.ico" Link="tray-icon.ico" TargetPath="tray-icon.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
 </Project>
