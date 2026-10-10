@@ -50,17 +50,19 @@ namespace MonitorHotkeys
 
     public sealed class PeerService : IDisposable
     {
-        readonly AppConfig config; readonly Func<string, string> commandHandler; readonly HashSet<string> seen = new HashSet<string>(); readonly SemaphoreSlim connectionSlots = new SemaphoreSlim(4, 4);
+        readonly AppConfig config; readonly Func<string, string> commandHandler; readonly Func<byte[]> keyProvider; readonly IPAddress listenAddress; readonly HashSet<string> seen = new HashSet<string>(); readonly SemaphoreSlim connectionSlots = new SemaphoreSlim(4, 4);
         TcpListener listener; Thread thread; volatile bool stopping;
-        public PeerService(AppConfig config, Func<string, string> commandHandler) { this.config = config; this.commandHandler = commandHandler; }
+        public PeerService(AppConfig config, Func<string, string> commandHandler, Func<byte[]> keyProvider = null, IPAddress listenAddress = null) { this.config = config; this.commandHandler = commandHandler; this.keyProvider = keyProvider; this.listenAddress = listenAddress ?? IPAddress.Any; }
+        public int BoundPort { get { return listener == null ? 0 : ((IPEndPoint)listener.LocalEndpoint).Port; } }
         byte[] Key()
         {
+            if (keyProvider != null) { byte[] provided = keyProvider(); if (provided == null || provided.Length < 32) throw new InvalidOperationException("The peer pairing key is invalid."); return provided; }
             string text = PeerKeyStore.Get(); if (String.IsNullOrWhiteSpace(text)) throw new InvalidOperationException("No peer pairing key is configured.");
             try { byte[] key = Convert.FromBase64String(text); if (key.Length < 32) throw new FormatException(); return key; } catch { throw new InvalidOperationException("The peer pairing key is invalid."); }
         }
         public void Start()
         {
-            Stop(); if (!config.PeerEnabled) return; Key(); stopping = false; listener = new TcpListener(IPAddress.Any, config.ListenPort); listener.Start(); TcpListener active = listener;
+            Stop(); if (!config.PeerEnabled) return; Key(); stopping = false; listener = new TcpListener(listenAddress, config.ListenPort); listener.Start(); TcpListener active = listener;
             thread = new Thread(new ThreadStart(delegate { Listen(active); })) { IsBackground = true, Name = "DisplayCue peer listener" }; thread.Start();
         }
         public void Stop() { stopping = true; try { if (listener != null) listener.Stop(); } catch { } try { if (thread != null && thread != Thread.CurrentThread) thread.Join(1000); } catch { } listener = null; thread = null; }
@@ -91,7 +93,7 @@ namespace MonitorHotkeys
                 finally { if (stream != null) stream.Dispose(); }
             }
         }
-        static string CommandName(string command) { if (command.StartsWith("PROFILE:")) return "PROFILE"; if (command.StartsWith("TX|")) { string[] p = command.Split('|'); return p.Length > 1 ? "TX_" + p[1] : "TX"; } return command; }
+        static string CommandName(string command) { if (command.StartsWith("PROFILE:")) return "PROFILE"; if (command.StartsWith("TX|") || command.StartsWith("LEASE|")) { string[] p = command.Split('|'); return p.Length > 1 ? p[0] + "_" + p[1] : p[0]; } return command; }
         string Sign(string value) { using (HMACSHA256 hmac = new HMACSHA256(Key())) return Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(value))); }
         static bool FixedEquals(string a, string b)
         {

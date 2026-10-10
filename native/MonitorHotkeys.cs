@@ -28,6 +28,7 @@ namespace MonitorHotkeys
         [DataMember] public int ListenPort = 45831;
         [DataMember] public string DeviceName = Environment.MachineName;
         [DataMember] public List<DisplayProfile> Profiles = new List<DisplayProfile>();
+        [DataMember] public List<DeskRule> Desks = new List<DeskRule>();
     }
 
     [DataContract]
@@ -38,6 +39,10 @@ namespace MonitorHotkeys
         [DataMember] public List<string> Devices = new List<string>();
         [DataMember] public List<MonitorInputAssignment> MonitorInputs = new List<MonitorInputAssignment>();
         [DataMember] public string PeerProfileName = "";
+        [DataMember] public List<SavedDisplayLayout> Layout = new List<SavedDisplayLayout>();
+        [DataMember] public string ValidatedSignature = "";
+        [DataMember] public string ValidatedProfileDigest = "";
+        [DataMember] public string RecoveryProfileDigest = "";
         public override string ToString() { return Name; }
     }
 
@@ -53,7 +58,7 @@ namespace MonitorHotkeys
     public sealed class MonitorInfo
     {
         public string Name, Key, DevicePath, GdiName;
-        public bool Active;
+        public bool Active, Internal;
         public override string ToString() { return Name; }
     }
 
@@ -78,7 +83,8 @@ namespace MonitorHotkeys
                     {
                         AppConfig c = (AppConfig)new DataContractJsonSerializer(typeof(AppConfig)).ReadObject(s);
                         if (c.Profiles == null) c.Profiles = new List<DisplayProfile>();
-                        foreach (DisplayProfile p in c.Profiles) { if (String.IsNullOrWhiteSpace(p.Id)) p.Id = Guid.NewGuid().ToString("N"); if (p.MonitorInputs == null) p.MonitorInputs = new List<MonitorInputAssignment>(); }
+                        if (c.Desks == null) c.Desks = new List<DeskRule>();
+                        foreach (DisplayProfile p in c.Profiles) { if (String.IsNullOrWhiteSpace(p.Id)) p.Id = Guid.NewGuid().ToString("N"); if (p.MonitorInputs == null) p.MonitorInputs = new List<MonitorInputAssignment>(); if (p.Devices == null) p.Devices = new List<string>(); if (p.Layout == null) p.Layout = new List<SavedDisplayLayout>(); }
                         if (String.IsNullOrWhiteSpace(c.QuickOneHotkey) || (c.QuickOneHotkey == "Ctrl+Shift+F11" && !String.IsNullOrWhiteSpace(c.TvOnlyHotkey) && c.TvOnlyHotkey != "Ctrl+Shift+F11")) c.QuickOneHotkey = String.IsNullOrWhiteSpace(c.TvOnlyHotkey) ? "Ctrl+Shift+F11" : c.TvOnlyHotkey;
                         if (String.IsNullOrWhiteSpace(c.QuickTwoHotkey) || (c.QuickTwoHotkey == "Ctrl+Shift+F12" && !String.IsNullOrWhiteSpace(c.AllHotkey) && c.AllHotkey != "Ctrl+Shift+F12")) c.QuickTwoHotkey = String.IsNullOrWhiteSpace(c.AllHotkey) ? "Ctrl+Shift+F12" : c.AllHotkey;
                         if (c.QuickOneProfileId == null) c.QuickOneProfileId = "";
@@ -93,12 +99,17 @@ namespace MonitorHotkeys
         public static void Save(AppConfig c)
         {
             Directory.CreateDirectory(ConfigDirectory);
-            using (FileStream s = File.Create(PathName))
-                new DataContractJsonSerializer(typeof(AppConfig)).WriteObject(s, c);
+            lock (SaveLock)
+            {
+                string temporary = PathName + ".tmp";
+                using (FileStream s = File.Create(temporary)) new DataContractJsonSerializer(typeof(AppConfig)).WriteObject(s, c);
+                File.Move(temporary, PathName, true);
+            }
         }
+        static readonly object SaveLock = new object();
     }
 
-    public static class DisplayEngine
+    public static partial class DisplayEngine
     {
         const uint QDC_ALL_PATHS = 1, QDC_ONLY_ACTIVE_PATHS = 2;
         const uint SDC_APPLY = 0x80, SDC_USE_SUPPLIED = 0x20, SDC_SAVE = 0x200, SDC_ALLOW = 0x400;
@@ -109,7 +120,15 @@ namespace MonitorHotkeys
         [StructLayout(LayoutKind.Sequential)] struct SOURCE { public LUID adapterId; public uint id, modeInfoIdx, statusFlags; }
         [StructLayout(LayoutKind.Sequential)] struct TARGET { public LUID adapterId; public uint id, modeInfoIdx, outputTechnology, rotation, scaling; public RATIONAL refreshRate; public uint scanLineOrdering; [MarshalAs(UnmanagedType.Bool)] public bool targetAvailable; public uint statusFlags; }
         [StructLayout(LayoutKind.Sequential)] struct PATH { public SOURCE sourceInfo; public TARGET targetInfo; public uint flags; }
-        [StructLayout(LayoutKind.Sequential, Size = 64)] struct MODEUNION { }
+        // DISPLAYCONFIG_MODE_INFO is 64 bytes total, including its 16-byte header.
+        [StructLayout(LayoutKind.Explicit, Size = 48)] struct MODEUNION
+        {
+            [FieldOffset(0)] public SOURCEMODE source;
+            [FieldOffset(0)] public SIGNAL target;
+        }
+        [StructLayout(LayoutKind.Sequential)] struct SOURCEMODE { public uint width, height, pixelFormat; public int x, y; }
+        [StructLayout(LayoutKind.Sequential)] struct REGION { public uint width, height; }
+        [StructLayout(LayoutKind.Sequential)] struct SIGNAL { public ulong pixelRate; public RATIONAL horizontal, vertical; public REGION active, total; public uint videoStandard, scanLineOrdering; }
         [StructLayout(LayoutKind.Sequential)] struct MODE { public uint infoType, id; public LUID adapterId; public MODEUNION data; }
         [StructLayout(LayoutKind.Sequential)] struct HEADER { public int type, size; public LUID adapterId; public uint id; }
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct TARGETNAME { public HEADER header; public uint flags, outputTechnology; public ushort edidManufactureId, edidProductCodeId; public uint connectorInstance; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string monitorFriendlyDeviceName; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string monitorDevicePath; }
@@ -123,9 +142,15 @@ namespace MonitorHotkeys
 
         static void Query(uint flag, out PATH[] paths, out MODE[] modes)
         {
-            uint pc, mc; int e = GetDisplayConfigBufferSizes(flag, out pc, out mc); if (e != 0) throw new InvalidOperationException("Display query failed: " + e);
-            paths = new PATH[pc]; modes = new MODE[mc]; e = QueryDisplayConfig(flag, ref pc, paths, ref mc, modes, IntPtr.Zero); if (e != 0) throw new InvalidOperationException("Display query failed: " + e);
-            Array.Resize(ref paths, (int)pc); Array.Resize(ref modes, (int)mc);
+            for (int attempt = 0; attempt < 5; attempt++)
+            {
+                uint pc, mc; int e = GetDisplayConfigBufferSizes(flag, out pc, out mc); if (e != 0) throw new InvalidOperationException("Display query failed: " + e);
+                paths = new PATH[pc]; modes = new MODE[mc]; e = QueryDisplayConfig(flag, ref pc, paths, ref mc, modes, IntPtr.Zero);
+                if (e == 122) continue; // Hotplug changed the buffer sizes between calls.
+                if (e != 0) throw new InvalidOperationException("Display query failed: " + e);
+                Array.Resize(ref paths, (int)pc); Array.Resize(ref modes, (int)mc); return;
+            }
+            throw new InvalidOperationException("Displays are still reconnecting. Try again shortly.");
         }
         static string Key(LUID id, uint target) { return id.HighPart + ":" + id.LowPart + ":" + target; }
         static TARGETNAME TargetName(PATH p)
@@ -145,7 +170,7 @@ namespace MonitorHotkeys
             foreach (PATH p in all)
             {
                 if (!p.targetInfo.targetAvailable) continue; string k = Key(p.targetInfo.adapterId, p.targetInfo.id); if (!seen.Add(k)) continue;
-                TARGETNAME n = TargetName(p); result.Add(new MonitorInfo { Name = String.IsNullOrWhiteSpace(n.monitorFriendlyDeviceName) ? "Unknown monitor" : n.monitorFriendlyDeviceName, Key = k, Active = on.Contains(k), DevicePath = n.monitorDevicePath, GdiName = gdi.ContainsKey(k) ? gdi[k] : SourceName(p) });
+                TARGETNAME n = TargetName(p); result.Add(new MonitorInfo { Name = String.IsNullOrWhiteSpace(n.monitorFriendlyDeviceName) ? "Unknown monitor" : n.monitorFriendlyDeviceName, Key = k, Active = on.Contains(k), Internal = p.targetInfo.outputTechnology == 0x80000000 || p.targetInfo.outputTechnology == 11 || p.targetInfo.outputTechnology == 6, DevicePath = n.monitorDevicePath, GdiName = gdi.ContainsKey(k) ? gdi[k] : SourceName(p) });
             }
             return result;
         }
@@ -174,7 +199,7 @@ namespace MonitorHotkeys
             while (DateTime.UtcNow < deadline);
             int available = monitors.Count(x => wantedDevices.Contains(x.DevicePath));
             if (available != wantedDevices.Count) throw new InvalidOperationException("Only " + available + " of " + wantedDevices.Count + " displays in this profile became available. Check their input source, cable, or power.");
-            RestoreExtended(); Thread.Sleep(1000);
+            if (!new HashSet<string>(monitors.Where(x => x.Active).Select(x => x.DevicePath), StringComparer.OrdinalIgnoreCase).IsSupersetOf(wantedDevices)) { RestoreExtended(); Thread.Sleep(1000); }
             monitors = GetMonitors(); HashSet<string> wantedKeys = new HashSet<string>(monitors.Where(x => wantedDevices.Contains(x.DevicePath)).Select(x => x.Key));
             if (wantedKeys.Count != wantedDevices.Count) throw new InvalidOperationException("Windows did not make every display in this profile available after restoring the extended desktop.");
             PATH[] active; MODE[] modes; Query(QDC_ONLY_ACTIVE_PATHS, out active, out modes); List<PATH> selected = new List<PATH>();
@@ -330,25 +355,38 @@ namespace MonitorHotkeys
                 int selectedIndex = 0; if (selected != null) for (int i = 1; i < input.Items.Count; i++) if (((InputChoice)input.Items[i]).Value == selected.Input) selectedIndex = i;
                 input.SelectedIndex = selectedIndex; choices[monitor] = input; rows.Controls.Add(input); y += 68;
             }
+            foreach (MonitorInputAssignment saved in Assignments.Where(x => !choices.Keys.Any(m => String.Equals(m.DevicePath, x.DevicePath, StringComparison.OrdinalIgnoreCase))).ToList())
+            {
+                Label retained = Theme.Label((String.IsNullOrWhiteSpace(saved.SharedId) ? "Saved monitor" : saved.SharedId) + " · " + DdcEngine.InputName(saved.Input) + " · currently unavailable", 8.5f, false);
+                retained.ForeColor = Theme.Muted; retained.Location = new Point(18, y + 8); rows.Controls.Add(retained);
+                Button remove = Theme.Button("Remove", false); remove.SetBounds(456, y, 100, 32); remove.Click += delegate { Assignments.Remove(saved); retained.Visible = false; remove.Visible = false; }; rows.Controls.Add(remove); y += 42;
+            }
             if (choices.Count == 0)
             {
-                Label none = Theme.Label("No active monitor currently reports DDC/CI input-source control.", 10, false); none.ForeColor = Theme.Muted; none.Location = new Point(18, 22); rows.Controls.Add(none);
+                Label none = Theme.Label("No active monitor currently reports DDC/CI input-source control.", 9, false); none.ForeColor = Theme.Muted; none.Location = new Point(18, y + 12); rows.Controls.Add(none);
             }
             Button cancel = Theme.Button("Cancel", false); cancel.SetBounds(390, 414, 108, 40); cancel.DialogResult = DialogResult.Cancel; Controls.Add(cancel);
             Button save = Theme.Button("Use these inputs", true); save.SetBounds(510, 414, 112, 40); save.Click += Save; Controls.Add(save); AcceptButton = save; CancelButton = cancel;
         }
         void Save(object sender, EventArgs e)
         {
-            Assignments = new List<MonitorInputAssignment>();
+            List<MonitorInputAssignment> edited = new List<MonitorInputAssignment>();
             foreach (KeyValuePair<DdcMonitorInfo, ComboBox> pair in choices)
             {
                 InputChoice choice = pair.Value.SelectedItem as InputChoice;
                 string sharedId = aliases[pair.Key].Text.Trim();
                 if (!String.IsNullOrWhiteSpace(sharedId) && sharedId.Any(x => !Char.IsLetterOrDigit(x) && x != '-' && x != '_')) { MessageBox.Show(this, "Peer IDs may contain only letters, numbers, hyphens, and underscores.", "Monitor inputs", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
-                if (choice != null && choice.Value.HasValue) Assignments.Add(new MonitorInputAssignment { DevicePath = pair.Key.DevicePath, PhysicalId = pair.Key.PhysicalId, SharedId = sharedId, Input = choice.Value.Value });
+                if (choice != null && choice.Value.HasValue) edited.Add(new MonitorInputAssignment { DevicePath = pair.Key.DevicePath, PhysicalId = pair.Key.PhysicalId, SharedId = sharedId, Input = choice.Value.Value });
             }
-            if (Assignments.Where(x => !String.IsNullOrWhiteSpace(x.SharedId)).GroupBy(x => x.SharedId, StringComparer.OrdinalIgnoreCase).Any(x => x.Count() > 1)) { MessageBox.Show(this, "Each monitor in a profile needs a different Peer ID.", "Monitor inputs", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
+            List<MonitorInputAssignment> merged = MergeAssignments(Assignments, choices.Keys.Select(x => x.DevicePath), edited);
+            if (merged.Where(x => !String.IsNullOrWhiteSpace(x.SharedId)).GroupBy(x => x.SharedId, StringComparer.OrdinalIgnoreCase).Any(x => x.Count() > 1)) { MessageBox.Show(this, "Each monitor in a profile needs a different Peer ID.", "Monitor inputs", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
+            Assignments = merged;
             DialogResult = DialogResult.OK; Close();
+        }
+        public static List<MonitorInputAssignment> MergeAssignments(IEnumerable<MonitorInputAssignment> saved, IEnumerable<string> editablePaths, IEnumerable<MonitorInputAssignment> edited)
+        {
+            HashSet<string> visible = new HashSet<string>(editablePaths, StringComparer.OrdinalIgnoreCase);
+            return saved.Where(x => !visible.Contains(x.DevicePath)).Concat(edited).ToList();
         }
         protected override void OnFormClosed(FormClosedEventArgs e) { DdcEngine.Release(monitors); base.OnFormClosed(e); }
     }
@@ -364,6 +402,7 @@ namespace MonitorHotkeys
         ComboBox quickOne, quickTwo; TextBox quickOneHotkey, quickTwoHotkey; ListBox profiles; CheckedListBox checks; TextBox profileName, profilePeerName; Panel content; Button generalNav, profilesNav, peerNav;
         TextBox peerHost, peerPort, listenPort, pairingKey, deviceName; CheckBox peerEnabled;
         List<MonitorInputAssignment> profileInputs = new List<MonitorInputAssignment>(); Button inputButton;
+        List<SavedDisplayLayout> profileLayout = new List<SavedDisplayLayout>(); Label layoutStatus;
         public SettingsForm(AppController owner)
         {
             this.owner = owner; config = owner.Config; monitors = DisplayEngine.GetMonitors();
@@ -374,7 +413,7 @@ namespace MonitorHotkeys
             generalNav = NavButton("Quick switching", 94); generalNav.Click += delegate { ShowPage(0); }; sidebar.Controls.Add(generalNav);
             profilesNav = NavButton("Display profiles", 142); profilesNav.Click += delegate { ShowPage(1); }; sidebar.Controls.Add(profilesNav);
             peerNav = NavButton("Paired computer", 190); peerNav.Click += delegate { ShowPage(2); }; sidebar.Controls.Add(peerNav);
-            Label version = Theme.Label("Version " + Application.ProductVersion, 8.5f, false); version.ForeColor = Theme.Muted; version.Location = new Point(20, 566); sidebar.Controls.Add(version);
+            Label version = Theme.Label("Version " + typeof(AppController).Assembly.GetName().Version.ToString(3), 8.5f, false); version.ForeColor = Theme.Muted; version.Location = new Point(20, 566); sidebar.Controls.Add(version);
             content = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Back }; Controls.Add(content); content.BringToFront(); ShowPage(0);
         }
         Button NavButton(string text, int y) { Button b = new Button { Text = text, TextAlign = ContentAlignment.MiddleLeft, Location = new Point(12, y), Size = new Size(172, 42), Padding = new Padding(12, 0, 0, 0), FlatStyle = FlatStyle.Flat, BackColor = Theme.Sidebar, ForeColor = Theme.Muted, Cursor = Cursors.Hand, Font = new Font("Segoe UI Semibold", 9.5f) }; b.FlatAppearance.BorderSize = 0; return b; }
@@ -430,7 +469,7 @@ namespace MonitorHotkeys
             Button identify = Theme.Button("Identify displays", false); identify.SetBounds(518, 29, 148, 40); identify.Click += delegate { owner.Identify(); }; page.Controls.Add(identify);
             Panel listCard = Theme.Card(34, 106, 216, 399); page.Controls.Add(listCard); listCard.Controls.Add(At(Theme.Label("Your profiles", 11, true), 16, 15));
             profiles = new ListBox { BorderStyle = BorderStyle.None, BackColor = Theme.Input, ForeColor = Theme.Text, Font = new Font("Segoe UI", 10), Location = new Point(16, 50), Size = new Size(184, 282), IntegralHeight = false }; foreach (DisplayProfile p in config.Profiles) profiles.Items.Add(p); profiles.SelectedIndexChanged += LoadProfile; listCard.Controls.Add(profiles);
-            Button add = Theme.Button("New profile", false); add.SetBounds(16, 345, 184, 38); add.Click += delegate { profiles.ClearSelected(); profileName.Text = ""; profilePeerName.Text = ""; profileInputs = new List<MonitorInputAssignment>(); UpdateInputButton(); for (int i = 0; i < checks.Items.Count; i++) checks.SetItemChecked(i, false); }; listCard.Controls.Add(add);
+            Button add = Theme.Button("New profile", false); add.SetBounds(16, 345, 184, 38); add.Click += delegate { profiles.ClearSelected(); profileName.Text = ""; profilePeerName.Text = ""; profileInputs = new List<MonitorInputAssignment>(); profileLayout = new List<SavedDisplayLayout>(); UpdateInputButton(); UpdateLayoutStatus(); for (int i = 0; i < checks.Items.Count; i++) checks.SetItemChecked(i, false); }; listCard.Controls.Add(add);
             Panel editorCard = Theme.Card(266, 106, 400, 399); page.Controls.Add(editorCard); editorCard.Controls.Add(At(Theme.Label("Profile details", 11, true), 18, 15));
             editorCard.Controls.Add(At(Theme.Label("Name", 9, true), 18, 53));
             profileName = new TextBox { BackColor = Theme.Input, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 10.5f), Location = new Point(18, 78), Width = 364 }; editorCard.Controls.Add(profileName);
@@ -443,20 +482,41 @@ namespace MonitorHotkeys
             inputButton = Theme.Button("Monitor inputs…", false); inputButton.SetBounds(18, 327, 154, 40); inputButton.Click += ConfigureInputs; editorCard.Controls.Add(inputButton);
             Button delete = Theme.Button("Delete", false); delete.SetBounds(184, 327, 82, 40); delete.Click += DeleteProfile; editorCard.Controls.Add(delete);
             Button save = Theme.Button("Save profile", true); save.SetBounds(276, 327, 106, 40); save.Click += SaveProfile; editorCard.Controls.Add(save);
-            Label note = Theme.Label("Profiles are always available by right-clicking the tray icon.", 8.5f, false); note.ForeColor = Theme.Muted; note.Location = new Point(36, 529); page.Controls.Add(note);
+            Button captureLayout = Theme.Button("Capture current layout", false); captureLayout.SetBounds(34, 523, 206, 42); captureLayout.Click += CaptureProfileLayout; page.Controls.Add(captureLayout);
+            layoutStatus = Theme.Label("", 8.5f, false); layoutStatus.ForeColor = Theme.Muted; layoutStatus.Location = new Point(256, 530); page.Controls.Add(layoutStatus); UpdateLayoutStatus();
         }
         void LoadProfile(object sender, EventArgs e)
         {
-            DisplayProfile p = profiles.SelectedItem as DisplayProfile; if (p == null) return; profileName.Text = p.Name; profilePeerName.Text = p.PeerProfileName ?? ""; profileInputs = p.MonitorInputs == null ? new List<MonitorInputAssignment>() : p.MonitorInputs.Select(x => new MonitorInputAssignment { DevicePath = x.DevicePath, PhysicalId = x.PhysicalId, SharedId = x.SharedId, Input = x.Input }).ToList(); UpdateInputButton(); for (int i = 0; i < monitors.Count; i++) checks.SetItemChecked(i, p.Devices.Contains(monitors[i].DevicePath));
+            DisplayProfile p = profiles.SelectedItem as DisplayProfile; if (p == null) return; profileName.Text = p.Name; profilePeerName.Text = p.PeerProfileName ?? ""; profileInputs = p.MonitorInputs == null ? new List<MonitorInputAssignment>() : p.MonitorInputs.Select(x => new MonitorInputAssignment { DevicePath = x.DevicePath, PhysicalId = x.PhysicalId, SharedId = x.SharedId, Input = x.Input }).ToList(); profileLayout = new List<SavedDisplayLayout>(p.Layout ?? new List<SavedDisplayLayout>()); UpdateInputButton(); UpdateLayoutStatus(); for (int i = 0; i < monitors.Count; i++) checks.SetItemChecked(i, p.Devices.Contains(monitors[i].DevicePath));
+        }
+        void UpdateLayoutStatus() { if (layoutStatus != null) layoutStatus.Text = profileLayout.Count == 0 ? "Arrange the screens in Windows, then capture."
+            : "Positions, primary display and modes saved (" + profileLayout.Count + ")."; }
+        void CaptureProfileLayout(object sender, EventArgs e)
+        {
+            if (owner.IsBusy) return;
+            try
+            {
+                List<SavedDisplayLayout> captured = DisplayEngine.CaptureLayout();
+                if (captured.Any(x => !monitors.Any(m => m.DevicePath == x.DevicePath))) throw new InvalidOperationException("The connected displays changed. Reopen Settings before capturing.");
+                DisplayEngine.ValidateLayout(captured.Select(x => x.DevicePath), captured);
+                profileLayout = captured;
+                for (int i = 0; i < monitors.Count; i++) checks.SetItemChecked(i, captured.Any(x => String.Equals(x.DevicePath, monitors[i].DevicePath, StringComparison.OrdinalIgnoreCase)));
+                UpdateLayoutStatus();
+            }
+            catch (Exception error) { MessageBox.Show(this, error.Message, "Capture layout", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
         }
         void ConfigureInputs(object sender, EventArgs e) { using (MonitorInputsForm form = new MonitorInputsForm(profileInputs)) if (form.ShowDialog(this) == DialogResult.OK) { profileInputs = form.Assignments; UpdateInputButton(); } }
         void UpdateInputButton() { if (inputButton != null) inputButton.Text = profileInputs.Count == 0 ? "Monitor inputs…" : "Monitor inputs (" + profileInputs.Count + ")"; }
         void SaveProfile(object sender, EventArgs e)
         {
+            if (owner.IsBusy) { MessageBox.Show(this, "Wait for the display change to finish."); return; }
             if (String.IsNullOrWhiteSpace(profileName.Text)) { MessageBox.Show(this, "Enter a profile name.", "Display profiles"); return; }
             List<string> devices = new List<string>(); for (int i = 0; i < monitors.Count; i++) if (checks.GetItemChecked(i)) devices.Add(monitors[i].DevicePath);
             if (devices.Count == 0) { MessageBox.Show(this, "Choose at least one display.", "Display profiles"); return; }
-            DisplayProfile p = profiles.SelectedItem as DisplayProfile; if (p == null) { p = new DisplayProfile(); config.Profiles.Add(p); profiles.Items.Add(p); } p.Name = profileName.Text.Trim(); p.PeerProfileName = profilePeerName.Text.Trim(); p.Devices = devices; p.MonitorInputs = profileInputs.Select(x => new MonitorInputAssignment { DevicePath = x.DevicePath, PhysicalId = x.PhysicalId, SharedId = x.SharedId, Input = x.Input }).ToList(); int selected = profiles.Items.IndexOf(p); profiles.Items.Remove(p); profiles.Items.Insert(selected, p); profiles.SelectedIndex = selected; ConfigStore.Save(config); owner.RefreshMenu();
+            DisplayProfile p = profiles.SelectedItem as DisplayProfile;
+            if (config.Profiles.Any(x => x != p && x.Name.Equals(profileName.Text.Trim(), StringComparison.OrdinalIgnoreCase))) { MessageBox.Show(this, "Choose a unique profile name.", "Display profiles"); return; }
+            try { DisplayEngine.ValidateLayout(devices, profileLayout); } catch (Exception error) { MessageBox.Show(this, error.Message, "Display profiles"); return; }
+            if (p == null) { p = new DisplayProfile(); config.Profiles.Add(p); profiles.Items.Add(p); } p.Name = profileName.Text.Trim(); p.PeerProfileName = profilePeerName.Text.Trim(); p.Devices = devices; p.Layout = profileLayout; p.MonitorInputs = profileInputs.Select(x => new MonitorInputAssignment { DevicePath = x.DevicePath, PhysicalId = x.PhysicalId, SharedId = x.SharedId, Input = x.Input }).ToList(); int selected = profiles.Items.IndexOf(p); profiles.Items.Remove(p); profiles.Items.Insert(selected, p); profiles.SelectedIndex = selected; ConfigStore.Save(config); owner.RefreshMenu();
         }
         void BuildPeer(Control page)
         {
@@ -489,13 +549,12 @@ namespace MonitorHotkeys
         static Control At(Control c, int x, int y) { c.Location = new Point(x, y); return c; }
     }
 
-    public sealed class AppController : ApplicationContext
+    public sealed partial class AppController : ApplicationContext
     {
         sealed class ProfileTransition
         {
-            public string Id; public DisplayProfile Profile; public List<string> PreviousDisplays; public List<MonitorInputAssignment> PreviousInputs = new List<MonitorInputAssignment>(); public bool InputsApplied, Committed; public DateTime StartedUtc = DateTime.UtcNow;
+            public string Id, OtherDigest; public DisplayProfile Profile; public List<string> PreviousDisplays; public List<SavedDisplayLayout> PreviousLayout; public List<MonitorInputAssignment> PreviousInputs = new List<MonitorInputAssignment>(); public bool FinalApplied, Restored, Undoing, Committed; public DateTime StartedUtc = DateTime.UtcNow;
         }
-        sealed class InputRequest { public string PhysicalId; public uint Input; }
         public AppConfig Config { get; private set; }
         readonly NotifyIcon tray; readonly ContextMenuStrip menu; readonly HotKeyWindow hotkeys; readonly Icon icon; readonly Control dispatcher; PeerService peer; ProfileTransition inboundTransition; string activeTransitionId;
         public AppController(bool openSettings)
@@ -503,6 +562,7 @@ namespace MonitorHotkeys
             Config = ConfigStore.Load(); icon = LoadIcon(); menu = new ContextMenuStrip(); tray = new NotifyIcon { Icon = icon, Text = "DisplayCue", Visible = true, ContextMenuStrip = menu }; tray.DoubleClick += delegate { OpenSettings(); };
             dispatcher = new Control(); IntPtr dispatcherHandle = dispatcher.Handle; peer = new PeerService(Config, HandlePeerCommand); try { peer.Start(); } catch (Exception ex) { tray.ShowBalloonTip(5000, "DisplayCue peer", ex.Message, ToolTipIcon.Warning); }
             hotkeys = new HotKeyWindow(); hotkeys.Pressed += delegate(int id) { if (id == 1) RunQuickAction(Config.QuickOneProfileId, "Quick action 1"); else if (id == 2) RunQuickAction(Config.QuickTwoProfileId, "Quick action 2"); }; RegisterHotkeys(); RefreshMenu();
+            StartAutomation();
             if (openSettings) { System.Windows.Forms.Timer startup = new System.Windows.Forms.Timer(); startup.Interval = 250; startup.Tick += delegate { startup.Stop(); startup.Dispose(); OpenSettings(); }; startup.Start(); }
         }
         Icon LoadIcon() { string p = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tray-icon.ico"); return File.Exists(p) ? new Icon(p) : SystemIcons.Application; }
@@ -512,7 +572,11 @@ namespace MonitorHotkeys
             profiles.DropDownItems.Add("All displays", null, delegate { AllDisplays(); });
             if (Config.Profiles.Count > 0) profiles.DropDownItems.Add(new ToolStripSeparator());
             foreach (DisplayProfile profile in Config.Profiles) { DisplayProfile captured = profile; profiles.DropDownItems.Add(profile.Name, null, delegate { Apply(captured); }); }
-            menu.Items.Add(profiles); menu.Items.Add("Identify displays", null, delegate { Identify(); }); menu.Items.Add("Settings and profiles…", null, delegate { OpenSettings(); }); menu.Items.Add(new ToolStripSeparator()); menu.Items.Add("Exit", null, delegate { ExitThread(); });
+            menu.Items.Add(profiles);
+            menu.Items.Add("Undo last change / test recovery", null, delegate { UndoLastChange(); }).Enabled = lastChange != null && !IsBusy;
+            menu.Items.Add("Leave monitors on desktop this session", null, delegate { LeaveOnDesktop(); }).Enabled = !IsBusy && Config.Desks.Any(x => (x.Id == activeDesk || x.Id == candidateDesk) && !String.IsNullOrWhiteSpace(x.ReturnProfileName));
+            menu.Items.Add("Automatic desks…", null, delegate { OpenDesks(); });
+            menu.Items.Add("Identify displays", null, delegate { Identify(); }); menu.Items.Add("Settings and profiles…", null, delegate { OpenSettings(); }); menu.Items.Add(new ToolStripSeparator()); menu.Items.Add("Exit", null, delegate { ExitThread(); }).Enabled = !IsBusy;
         }
         public void RegisterHotkeys()
         {
@@ -523,205 +587,12 @@ namespace MonitorHotkeys
         {
             mods = 0; key = 0; try { foreach (string raw in text.Split('+')) { string p = raw.Trim(); if (p.Equals("Ctrl", StringComparison.OrdinalIgnoreCase)) mods |= 2; else if (p.Equals("Alt", StringComparison.OrdinalIgnoreCase)) mods |= 1; else if (p.Equals("Shift", StringComparison.OrdinalIgnoreCase)) mods |= 4; else if (p.Equals("Win", StringComparison.OrdinalIgnoreCase)) mods |= 8; else key = (uint)(Keys)Enum.Parse(typeof(Keys), p, true); } return key != 0; } catch { return false; }
         }
-        void OpenSettings() { SettingsForm f = new SettingsForm(this); f.ShowDialog(); RefreshMenu(); }
+        void OpenSettings() { if (IsBusy) { Error("A display change is still running."); return; } editingSettings = true; try { using (SettingsForm f = new SettingsForm(this)) f.ShowDialog(); } finally { editingSettings = false; } RefreshMenu(); }
         public void RestartPeer() { try { peer.Start(); } catch (Exception ex) { throw new InvalidOperationException("The peer listener could not start: " + ex.Message, ex); } }
         public string TestPeer()
         {
             try { return peer.Send("INFO"); }
             catch (InvalidOperationException ex) { if (ex.Message.IndexOf("closed the connection", StringComparison.OrdinalIgnoreCase) < 0 && ex.Message.IndexOf("unsupported response", StringComparison.OrdinalIgnoreCase) < 0) throw; return peer.Send("PING") + Environment.NewLine + "Connected, but the peer must be updated to show profiles and detailed errors."; }
-        }
-        string HandlePeerCommand(string command)
-        {
-            if (command == "PING") return Config.DeviceName;
-            if (command == "INFO") return Config.DeviceName + Environment.NewLine + "Profiles: " + (Config.Profiles.Count == 0 ? "none" : String.Join(", ", Config.Profiles.Select(x => x.Name))) + Environment.NewLine + CurrentState() + Environment.NewLine + CurrentDdcState();
-            if (command == "STATUS") return CurrentState();
-            if (command.StartsWith("TX|")) return DispatchPeerTransition(command);
-            if (!command.StartsWith("PROFILE:")) throw new InvalidOperationException("Unsupported command.");
-            string name = command.Substring(8); string result = null; using (ManualResetEventSlim done = new ManualResetEventSlim(false))
-            {
-                dispatcher.BeginInvoke((Action)delegate
-                {
-                    try { DisplayProfile profile = Config.Profiles.FirstOrDefault(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase)); if (profile == null) throw new InvalidOperationException("Profile not found: " + name); ApplyLocal(profile, false); result = profile.Name; }
-                    catch (Exception ex) { result = "ERROR:" + ex.Message; }
-                    finally { done.Set(); }
-                });
-                if (!done.Wait(50000)) throw new InvalidOperationException("The display change timed out.");
-            }
-            if (result.StartsWith("ERROR:")) throw new InvalidOperationException(result.Substring(6)); return result;
-        }
-        string DispatchPeerTransition(string command)
-        {
-            string result = null; using (ManualResetEventSlim done = new ManualResetEventSlim(false))
-            {
-                dispatcher.BeginInvoke((Action)delegate { try { result = HandlePeerTransitionOnUi(command); } catch (Exception ex) { result = "ERROR:" + ex.Message; } finally { done.Set(); } });
-                if (!done.Wait(50000)) throw new InvalidOperationException("The coordinated display change timed out.");
-            }
-            if (result.StartsWith("ERROR:")) throw new InvalidOperationException(result.Substring(6)); return result;
-        }
-        string HandlePeerTransitionOnUi(string command)
-        {
-            string[] parts = command.Split('|'); if (parts.Length < 3) throw new InvalidOperationException("Malformed transition request.");
-            string action = parts[1], id = parts[2];
-            if (action == "BEGIN")
-            {
-                if (parts.Length != 4) throw new InvalidOperationException("Malformed transition request.");
-                if (inboundTransition != null && (inboundTransition.Committed || DateTime.UtcNow - inboundTransition.StartedUtc > TimeSpan.FromMinutes(2))) { if (!inboundTransition.Committed) RecoverAbandonedInbound(inboundTransition); inboundTransition = null; activeTransitionId = null; }
-                if (inboundTransition != null || !String.IsNullOrWhiteSpace(activeTransitionId)) throw new InvalidOperationException("Another coordinated display change is already in progress.");
-                string profileName; try { profileName = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(parts[3])); } catch { throw new InvalidOperationException("Malformed profile name."); }
-                DisplayProfile profile = Config.Profiles.FirstOrDefault(x => x.Name.Equals(profileName, StringComparison.OrdinalIgnoreCase));
-                if (profile == null) throw new InvalidOperationException("Profile not found: " + profileName);
-                inboundTransition = BeginTransition(id, profile); activeTransitionId = id; string state = CurrentState() + "; " + CurrentDdcState(); PeerDiagnostics.Write("TX " + id + " BEGIN " + profile.Name + " " + state); return state;
-            }
-            if (inboundTransition == null || inboundTransition.Id != id) throw new InvalidOperationException("The coordinated display change is not active on this PC.");
-            if (action == "RELEASE") { ReleaseTransition(inboundTransition); return CurrentState(); }
-            if (action == "PLAN") return EncodeInputRequests(PlannedInputs(inboundTransition.Profile));
-            if (action == "INPUTS") return EncodeInputRequests(ApplyTransitionInputs(inboundTransition));
-            if (action == "SETINPUT" || action == "FORCEINPUT")
-            {
-                if (parts.Length != 5) throw new InvalidOperationException("Malformed DDC fallback request."); uint input; if (!UInt32.TryParse(parts[4], out input)) throw new InvalidOperationException("Malformed DDC input value.");
-                SetInputByPhysicalId(parts[3], input, action == "SETINPUT" ? inboundTransition : null); return CurrentState();
-            }
-            if (action == "APPLY") { ApplyTransitionFinal(inboundTransition); return CurrentState() + "; " + CurrentDdcState(); }
-            if (action == "COMMIT") { inboundTransition.Committed = true; activeTransitionId = null; PeerDiagnostics.Write("TX " + id + " COMMIT " + CurrentState()); DesktopRecovery.BringWindowsIntoView(); return CurrentState(); }
-            if (action == "ROLLBACK_RELEASE") { ReleaseToward(inboundTransition.PreviousDisplays); return CurrentState(); }
-            if (action == "ROLLBACK_INPUTS") return EncodeInputRequests(TryApplyInputs(inboundTransition.PreviousInputs, null));
-            if (action == "ROLLBACK_APPLY") { ApplyPreviousTopology(inboundTransition); return CurrentState(); }
-            if (action == "ROLLBACK_DONE") { PeerDiagnostics.Write("TX " + id + " ROLLBACK " + CurrentState()); inboundTransition = null; activeTransitionId = null; return CurrentState(); }
-            throw new InvalidOperationException("Unsupported transition action.");
-        }
-        string CurrentState()
-        {
-            List<MonitorInfo> monitors = DisplayEngine.GetMonitors(); HashSet<string> active = new HashSet<string>(monitors.Where(x => x.Active).Select(x => x.DevicePath), StringComparer.OrdinalIgnoreCase);
-            DisplayProfile match = Config.Profiles.FirstOrDefault(x => new HashSet<string>(x.Devices ?? new List<string>(), StringComparer.OrdinalIgnoreCase).SetEquals(active));
-            string names = String.Join(", ", monitors.Where(x => x.Active).Select(x => x.Name));
-            return "State: " + Config.DeviceName + "; profile=" + (match == null ? "custom" : match.Name) + "; active=" + active.Count + "/" + monitors.Count + " [" + names + "]";
-        }
-        string CurrentDdcState()
-        {
-            List<DdcMonitorInfo> ddc = DdcEngine.Discover(); try { List<DdcMonitorInfo> reachable = ddc.Where(x => x.SupportsInputSwitching).ToList(); return "DDC reachable=" + reachable.Count + " [" + String.Join(", ", reachable.Select(x => x.Name + "=" + (x.CurrentInput.HasValue ? DdcEngine.InputName(x.CurrentInput.Value) : "unknown"))) + "]"; }
-            finally { DdcEngine.Release(ddc); }
-        }
-        ProfileTransition BeginTransition(string id, DisplayProfile profile)
-        {
-            EnrichInputIdentities(profile);
-            List<string> previous = DisplayEngine.GetMonitors().Where(x => x.Active).Select(x => x.DevicePath).ToList();
-            if (previous.Count == 0) throw new InvalidOperationException("Windows reports no active displays.");
-            return new ProfileTransition { Id = id, Profile = profile, PreviousDisplays = previous };
-        }
-        void ReleaseTransition(ProfileTransition transition)
-        {
-            HashSet<string> desired = new HashSet<string>(transition.Profile.Devices, StringComparer.OrdinalIgnoreCase);
-            List<string> retained = DisplayEngine.GetMonitors().Where(x => x.Active && desired.Contains(x.DevicePath)).Select(x => x.DevicePath).ToList();
-            if (retained.Count > 0) DisplayEngine.ApplyActiveDevicePaths(retained);
-        }
-        List<InputRequest> ApplyTransitionInputs(ProfileTransition transition) { transition.InputsApplied = true; return TryApplyInputs(transition.Profile.MonitorInputs, transition.PreviousInputs); }
-        void ApplyTransitionFinal(ProfileTransition transition) { DisplayEngine.ApplyDevicePaths(transition.Profile.Devices); }
-        void ReleaseToward(IEnumerable<string> desiredPaths)
-        {
-            HashSet<string> desired = new HashSet<string>(desiredPaths, StringComparer.OrdinalIgnoreCase); List<string> retained = DisplayEngine.GetMonitors().Where(x => x.Active && desired.Contains(x.DevicePath)).Select(x => x.DevicePath).ToList();
-            if (retained.Count > 0) DisplayEngine.ApplyActiveDevicePaths(retained);
-        }
-        void ApplyPreviousTopology(ProfileTransition transition) { DisplayEngine.ApplyDevicePaths(transition.PreviousDisplays); }
-        static string EncodeInputRequests(IEnumerable<InputRequest> requests) { return String.Join(",", requests.Select(x => (String.IsNullOrWhiteSpace(x.PhysicalId) ? "?" : x.PhysicalId) + ":" + x.Input)); }
-        static List<InputRequest> DecodeInputRequests(string value)
-        {
-            List<InputRequest> result = new List<InputRequest>(); if (String.IsNullOrWhiteSpace(value)) return result;
-            foreach (string item in value.Split(',')) { int split = item.LastIndexOf(':'); uint input; if (split < 1 || !UInt32.TryParse(item.Substring(split + 1), out input)) throw new InvalidOperationException("The peer returned malformed DDC status."); result.Add(new InputRequest { PhysicalId = item.Substring(0, split), Input = input }); }
-            return result;
-        }
-        List<InputRequest> TryApplyInputs(IEnumerable<MonitorInputAssignment> requested, List<MonitorInputAssignment> previous)
-        {
-            List<InputRequest> failed = new List<InputRequest>(); List<MonitorInputAssignment> assignments = requested == null ? new List<MonitorInputAssignment>() : requested.ToList(); if (assignments.Count == 0) return failed;
-            List<DdcMonitorInfo> ddc = DdcEngine.Discover(); bool changed = false;
-            try
-            {
-                foreach (MonitorInputAssignment assignment in assignments)
-                {
-                    DdcMonitorInfo monitor = ddc.FirstOrDefault(x => x.DevicePath.Equals(assignment.DevicePath, StringComparison.OrdinalIgnoreCase));
-                    if (monitor != null && String.IsNullOrWhiteSpace(assignment.PhysicalId)) assignment.PhysicalId = monitor.PhysicalId;
-                    string identity = InputIdentity(assignment);
-                    if (monitor == null && !String.IsNullOrWhiteSpace(assignment.PhysicalId))
-                    {
-                        List<DdcMonitorInfo> matches = ddc.Where(x => x.PhysicalId == assignment.PhysicalId).ToList(); if (matches.Count > 1) throw new InvalidOperationException("Two monitors have the same physical DDC identity. Assign explicit monitor aliases before using peer fallback."); monitor = matches.SingleOrDefault();
-                    }
-                    if (monitor == null || !monitor.SupportsInputSwitching) { failed.Add(new InputRequest { PhysicalId = identity, Input = assignment.Input }); continue; }
-                    try
-                    {
-                        if (monitor.CurrentInput.HasValue && monitor.CurrentInput.Value == assignment.Input) continue;
-                        if (previous != null && monitor.CurrentInput.HasValue && previous.All(x => InputIdentity(x) != identity)) previous.Add(new MonitorInputAssignment { DevicePath = monitor.DevicePath, PhysicalId = monitor.PhysicalId, SharedId = assignment.SharedId, Input = monitor.CurrentInput.Value });
-                        DdcEngine.SetInput(monitor, assignment.Input); changed = true; Thread.Sleep(250);
-                    }
-                    catch { failed.Add(new InputRequest { PhysicalId = identity, Input = assignment.Input }); }
-                }
-                if (changed) Thread.Sleep(1250); return failed;
-            }
-            finally { DdcEngine.Release(ddc); }
-        }
-        void SetInputByPhysicalId(string physicalId, uint input, ProfileTransition capture)
-        {
-            if (String.IsNullOrWhiteSpace(physicalId) || physicalId == "?") throw new InvalidOperationException("The monitor has no shared physical identity, so DDC fallback cannot safely select it.");
-            DateTime deadline = DateTime.UtcNow.AddSeconds(8); string lastError = null;
-            do
-            {
-                List<DdcMonitorInfo> ddc = DdcEngine.Discover(); try
-                {
-                    List<string> mappedPaths = Config.Profiles.SelectMany(x => x.MonitorInputs ?? new List<MonitorInputAssignment>()).Where(x => !String.IsNullOrWhiteSpace(x.SharedId) && x.SharedId.Equals(physicalId, StringComparison.OrdinalIgnoreCase)).Select(x => x.DevicePath).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                    List<DdcMonitorInfo> matches = ddc.Where(x => x.SupportsInputSwitching && (x.PhysicalId == physicalId || mappedPaths.Contains(x.DevicePath, StringComparer.OrdinalIgnoreCase))).ToList();
-                    if (matches.Count > 1) throw new InvalidOperationException("The physical monitor identity is ambiguous on this PC.");
-                    if (matches.Count == 1)
-                    {
-                        DdcMonitorInfo monitor = matches[0]; if (monitor.CurrentInput.HasValue && monitor.CurrentInput.Value == input) return;
-                        if (capture != null && monitor.CurrentInput.HasValue && capture.PreviousInputs.All(x => InputIdentity(x) != physicalId)) capture.PreviousInputs.Add(new MonitorInputAssignment { DevicePath = monitor.DevicePath, PhysicalId = monitor.PhysicalId, SharedId = mappedPaths.Count > 0 ? physicalId : "", Input = monitor.CurrentInput.Value });
-                        DdcEngine.SetInput(monitor, input); Thread.Sleep(1250); return;
-                    }
-                    lastError = "The requested monitor is not currently reachable through DDC/CI.";
-                }
-                catch (InvalidOperationException ex) { lastError = ex.Message; if (lastError.IndexOf("ambiguous", StringComparison.OrdinalIgnoreCase) >= 0) throw; }
-                finally { DdcEngine.Release(ddc); }
-                Thread.Sleep(500);
-            }
-            while (DateTime.UtcNow < deadline);
-            throw new InvalidOperationException((lastError ?? "The requested monitor is unavailable.") + " Both PCs attempted DDC fallback.");
-        }
-        static string InputIdentity(MonitorInputAssignment assignment) { return !String.IsNullOrWhiteSpace(assignment.SharedId) ? assignment.SharedId.Trim() : assignment.PhysicalId ?? ""; }
-        void EnrichInputIdentities(DisplayProfile profile)
-        {
-            if (profile.MonitorInputs == null || profile.MonitorInputs.Count == 0) return; List<DdcMonitorInfo> ddc = DdcEngine.Discover(); bool changed = false;
-            try { foreach (MonitorInputAssignment assignment in profile.MonitorInputs) { if (!String.IsNullOrWhiteSpace(assignment.PhysicalId)) continue; DdcMonitorInfo monitor = ddc.FirstOrDefault(x => x.DevicePath.Equals(assignment.DevicePath, StringComparison.OrdinalIgnoreCase)); if (monitor != null && !String.IsNullOrWhiteSpace(monitor.PhysicalId)) { assignment.PhysicalId = monitor.PhysicalId; changed = true; } } }
-            finally { DdcEngine.Release(ddc); }
-            if (changed) ConfigStore.Save(Config);
-        }
-        static List<InputRequest> PlannedInputs(DisplayProfile profile) { return (profile.MonitorInputs ?? new List<MonitorInputAssignment>()).Select(x => new InputRequest { PhysicalId = InputIdentity(x), Input = x.Input }).ToList(); }
-        static void ValidateCombinedInputPlan(IEnumerable<InputRequest> local, IEnumerable<InputRequest> remote)
-        {
-            List<InputRequest> all = local.Concat(remote).ToList(); if (all.Any(x => String.IsNullOrWhiteSpace(x.PhysicalId) || x.PhysicalId == "?")) throw new InvalidOperationException("A DDC monitor has no shared identity. Re-save its monitor-input settings or enter the same Peer ID on both PCs.");
-            foreach (IGrouping<string, InputRequest> group in all.GroupBy(x => x.PhysicalId, StringComparer.OrdinalIgnoreCase)) if (group.Select(x => x.Input).Distinct().Count() > 1) throw new InvalidOperationException("The paired profiles request different inputs for monitor '" + group.Key + "'. Make the two profiles agree before switching.");
-        }
-        void ResolveInputFailures(List<InputRequest> localFailures, List<InputRequest> remoteFailures, ProfileTransition local, string id)
-        {
-            foreach (InputRequest request in localFailures) peer.Send("TX|SETINPUT|" + id + "|" + request.PhysicalId + "|" + request.Input);
-            foreach (InputRequest request in remoteFailures) SetInputByPhysicalId(request.PhysicalId, request.Input, local);
-        }
-        void ResolveRollbackFailures(List<InputRequest> localFailures, List<InputRequest> remoteFailures, string id)
-        {
-            foreach (InputRequest request in localFailures) peer.Send("TX|FORCEINPUT|" + id + "|" + request.PhysicalId + "|" + request.Input);
-            foreach (InputRequest request in remoteFailures) SetInputByPhysicalId(request.PhysicalId, request.Input, null);
-        }
-        void RollbackCoordinated(ProfileTransition local, string id, bool peerBegun)
-        {
-            try
-            {
-                ReleaseToward(local.PreviousDisplays); if (peerBegun) peer.Send("TX|ROLLBACK_RELEASE|" + id);
-                List<InputRequest> localFailed = TryApplyInputs(local.PreviousInputs, null); List<InputRequest> remoteFailed = peerBegun ? DecodeInputRequests(peer.Send("TX|ROLLBACK_INPUTS|" + id)) : new List<InputRequest>();
-                if (peerBegun) ResolveRollbackFailures(localFailed, remoteFailed, id); else if (localFailed.Count > 0) throw new InvalidOperationException("A monitor input could not be restored.");
-                ApplyPreviousTopology(local); if (peerBegun) { peer.Send("TX|ROLLBACK_APPLY|" + id); peer.Send("TX|ROLLBACK_DONE|" + id); }
-            }
-            catch (Exception ex) { PeerDiagnostics.Write("TX " + id + " ROLLBACK_ERROR " + ex.Message); }
-        }
-        void RecoverAbandonedInbound(ProfileTransition transition)
-        {
-            try { ReleaseToward(transition.PreviousDisplays); TryApplyInputs(transition.PreviousInputs, null); ApplyPreviousTopology(transition); PeerDiagnostics.Write("TX " + transition.Id + " RECOVERED_STALE"); }
-            catch (Exception ex) { PeerDiagnostics.Write("TX " + transition.Id + " STALE_RECOVERY_ERROR " + ex.Message); }
         }
         void RunQuickAction(string profileId, string actionName)
         {
@@ -730,83 +601,7 @@ namespace MonitorHotkeys
             if (profile == null) { tray.ShowBalloonTip(3500, "DisplayCue", actionName + " has no profile assigned. Choose one in Settings.", ToolTipIcon.Info); return; }
             Apply(profile);
         }
-        void AllDisplays() { try { DisplayEngine.RestoreExtended(); } catch (Exception ex) { Error(ex.Message); } }
-        void Apply(DisplayProfile p)
-        {
-            try
-            {
-                if (String.IsNullOrWhiteSpace(p.PeerProfileName)) { ApplyLocal(p, true); return; }
-                if (!String.IsNullOrWhiteSpace(activeTransitionId)) throw new InvalidOperationException("Another coordinated display change is already in progress.");
-                string id = Guid.NewGuid().ToString("N"), encodedProfile = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(p.PeerProfileName)); ProfileTransition local = BeginTransition(id, p); bool peerBegun = false; activeTransitionId = id;
-                try
-                {
-                    peerBegun = true; string remoteBefore = peer.Send("TX|BEGIN|" + id + "|" + encodedProfile); List<InputRequest> remotePlan = DecodeInputRequests(peer.Send("TX|PLAN|" + id)); ValidateCombinedInputPlan(PlannedInputs(local.Profile), remotePlan); PeerDiagnostics.Write("TX " + id + " SYNC local=" + CurrentState() + "; " + CurrentDdcState() + " remote=" + remoteBefore);
-                    ReleaseTransition(local); peer.Send("TX|RELEASE|" + id);
-                    List<InputRequest> localInputFailures = ApplyTransitionInputs(local); List<InputRequest> remoteInputFailures = DecodeInputRequests(peer.Send("TX|INPUTS|" + id)); ResolveInputFailures(localInputFailures, remoteInputFailures, local, id);
-                    ApplyTransitionFinal(local); string remoteAfter = peer.Send("TX|APPLY|" + id); PeerDiagnostics.Write("TX " + id + " VERIFIED local=" + CurrentState() + " remote=" + remoteAfter);
-                    using (ConfirmLayoutForm confirm = new ConfirmLayoutForm(p.Name + " + " + p.PeerProfileName))
-                    {
-                        if (confirm.ShowDialog() == DialogResult.Yes) { peer.Send("TX|COMMIT|" + id); DesktopRecovery.BringWindowsIntoView(); }
-                        else RollbackCoordinated(local, id, true);
-                    }
-                }
-                catch { RollbackCoordinated(local, id, peerBegun); throw; }
-                finally { activeTransitionId = null; }
-            }
-            catch (Exception ex) { Error(ex.Message); }
-        }
-        void ApplyLocal(DisplayProfile p, bool confirm)
-        {
-            List<string> previousDisplays = new List<string>(); List<MonitorInputAssignment> previousInputs = new List<MonitorInputAssignment>();
-            try
-            {
-                previousDisplays = DisplayEngine.GetMonitors().Where(x => x.Active).Select(x => x.DevicePath).ToList();
-                previousInputs = ApplyMonitorInputs(p.MonitorInputs);
-                DisplayEngine.ApplyDevicePaths(p.Devices);
-                if (confirm) ConfirmOrRollback(previousDisplays, previousInputs, p.Name);
-            }
-            catch (Exception ex)
-            {
-                try { ApplyMonitorInputs(previousInputs); if (previousDisplays.Count > 0) DisplayEngine.ApplyDevicePaths(previousDisplays); } catch { }
-                throw new InvalidOperationException(ex.Message, ex);
-            }
-        }
-        List<MonitorInputAssignment> ApplyMonitorInputs(IEnumerable<MonitorInputAssignment> requested)
-        {
-            List<MonitorInputAssignment> assignments = requested == null ? new List<MonitorInputAssignment>() : requested.ToList();
-            List<MonitorInputAssignment> previous = new List<MonitorInputAssignment>(); if (assignments.Count == 0) return previous;
-            List<DdcMonitorInfo> ddc = DdcEngine.Discover();
-            try
-            {
-                foreach (MonitorInputAssignment assignment in assignments)
-                {
-                    DdcMonitorInfo monitor = ddc.FirstOrDefault(x => x.DevicePath.Equals(assignment.DevicePath, StringComparison.OrdinalIgnoreCase));
-                    if (monitor == null || !monitor.SupportsInputSwitching) throw new InvalidOperationException("A monitor input in this profile is not currently reachable through DDC/CI.");
-                    if (monitor.CurrentInput.HasValue) previous.Add(new MonitorInputAssignment { DevicePath = monitor.DevicePath, Input = monitor.CurrentInput.Value });
-                }
-                bool changed = false; foreach (MonitorInputAssignment assignment in assignments)
-                {
-                    DdcMonitorInfo monitor = ddc.First(x => x.DevicePath.Equals(assignment.DevicePath, StringComparison.OrdinalIgnoreCase));
-                    if (!monitor.CurrentInput.HasValue || monitor.CurrentInput.Value != assignment.Input) { DdcEngine.SetInput(monitor, assignment.Input); changed = true; Thread.Sleep(250); }
-                }
-                if (changed) Thread.Sleep(1250);
-                return previous;
-            }
-            catch
-            {
-                foreach (MonitorInputAssignment restore in previous) try { DdcMonitorInfo monitor = ddc.FirstOrDefault(x => x.DevicePath.Equals(restore.DevicePath, StringComparison.OrdinalIgnoreCase)); if (monitor != null) DdcEngine.SetInput(monitor, restore.Input); } catch { }
-                throw;
-            }
-            finally { DdcEngine.Release(ddc); }
-        }
-        void ConfirmOrRollback(List<string> previousDisplays, List<MonitorInputAssignment> previousInputs, string name)
-        {
-            using (ConfirmLayoutForm confirm = new ConfirmLayoutForm(name))
-            {
-                if (confirm.ShowDialog() == DialogResult.Yes) DesktopRecovery.BringWindowsIntoView();
-                else try { ApplyMonitorInputs(previousInputs); DisplayEngine.ApplyDevicePaths(previousDisplays); } catch { }
-            }
-        }
+        void AllDisplays() { if (IsBusy) return; lastChange = null; SuppressCurrentDesk(); try { DisplayEngine.RestoreExtended(); } catch (Exception ex) { Error(ex.Message); } RefreshMenu(); }
         public void Identify()
         {
             List<MonitorInfo> monitors = DisplayEngine.GetMonitors(); List<IdentifyOverlay> overlays = new List<IdentifyOverlay>();
@@ -814,7 +609,7 @@ namespace MonitorHotkeys
             System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer(); timer.Interval = 3500; timer.Tick += delegate { timer.Stop(); foreach (IdentifyOverlay o in overlays) o.Close(); timer.Dispose(); }; timer.Start();
         }
         void Error(string message) { MessageBox.Show(message, "DisplayCue", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
-        protected override void ExitThreadCore() { peer.Dispose(); dispatcher.Dispose(); tray.Visible = false; tray.Dispose(); hotkeys.Dispose(); if (icon != SystemIcons.Application) icon.Dispose(); base.ExitThreadCore(); }
+        protected override void ExitThreadCore() { StopAutomation(); peer.Dispose(); dispatcher.Dispose(); tray.Visible = false; tray.Dispose(); hotkeys.Dispose(); if (icon != SystemIcons.Application) icon.Dispose(); base.ExitThreadCore(); }
     }
 
     static class Program

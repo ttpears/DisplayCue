@@ -2,7 +2,7 @@
 
 Desk Handoff coordinates DisplayCue profiles across trusted Windows computers. It is designed to complement input-sharing software such as Mouse Without Borders: DisplayCue owns display topology and monitor-input changes, while the input-sharing application continues to own keyboard, mouse, and clipboard transport.
 
-Version 1.4 introduces transactional two-computer handoff. A local profile references a named peer profile, and both installations exchange their live topology and DDC reachability before either final layout is committed. The trusted-device-group model below remains the direction for extending the same protocol beyond two computers.
+Version 1.5 uses handoff protocol 2 and retains the source Windows paths through physical input switching. Saved extended layouts include positions, primary display, orientation, resolution and refresh rate. The trusted-device-group model below remains the direction for extending coordination beyond two computers.
 
 ## Model
 
@@ -17,12 +17,22 @@ This separation allows local profiles to work without networking and prevents a 
 
 1. Discover required peers and reject the handoff if any required participant is unavailable.
 2. Ask every participant to validate its referenced profile and capture its current topology and affected monitor inputs.
-3. Reduce each desktop to the displays it keeps through the transition, so a computer releases shared screens before their inputs move.
-4. Apply each DDC change through the currently reachable peer, retrying through the other peer when the first route disappears.
-5. Apply and verify both final Windows topologies.
-6. Commit after user confirmation, or restore both captured states—including cross-peer DDC fallback—if a required action fails or times out.
+3. Read original inputs through a reachable participant, then activate available destination/control paths while retaining the outgoing paths. Capture any newly reachable originals before the first input write; reject missing originals.
+4. Apply each input change through either participant and read the physical input back. Do not overwrite the original snapshot when a fallback route sees an already changed input.
+5. Apply and verify both final Windows layouts; only now are outgoing shared paths removed.
+6. Commit after confirmation of a new pair of profile signatures. Unchanged validated signatures commit without the dialog. Revert, timeout, failure or Undo prepares original control paths, restores inputs through either participant, and attempts both original layouts even if one recovery action fails.
 
 Transactions use unique identifiers and expire automatically. Repeated commit and rollback messages must be idempotent.
+
+Version 1.5 keeps the current inbound transaction until a newer transaction supersedes it so a five-minute Undo can still restore its snapshot. Incomplete transactions recover after two minutes without phase activity. Recovery validation requires all original displays to be restored; an unplugged laptop may recover only its connected panel without earning calibration.
+
+## Desk automation
+
+Automation defaults to disabled. Saved monitor sets distinguish Home and Office; present Lenovo USB instance IDs can serve as dock anchors while video paths reconnect. Exact matches must be unique. Dock-only fallback is allowed only with no external video paths and one matching rule. A per-session override survives display changes and resume, and is cleared after three observations of physical disconnect.
+
+The desktop can arm a return lease only for the current committed transaction and a calibrated desktop-local profile. The laptop renews that transaction's lease while its saved dock remains present. Explicit undock requests or 30 seconds without renewal expire it. Return runs locally on the desktop, without needing the absent laptop. New manual/peer transitions cancel old leases; stale tokens cannot renew or release a new lease. A network outage can therefore cause return while the laptop remains physically docked.
+
+Calibration stores digests of the saved configuration and the paired configuration. A saved layout, successful Keep and successful full Undo are required before enabling a desk rule. These records represent a user-performed physical test; simulated regression tests never write calibration records for real hardware.
 
 ## Pairing and transport requirements
 

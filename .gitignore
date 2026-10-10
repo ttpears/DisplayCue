@@ -5,6 +5,8 @@ work/
 github/
 native/bin/
 native/obj/
+tests/bin/
+tests/obj/
 native/PackageAssets/
 *.user
 *.suo
