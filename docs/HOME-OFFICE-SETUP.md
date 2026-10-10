@@ -20,7 +20,7 @@ During calibration, disable the monitors' automatic source switching so enabling
 
 ## Install and pair
 
-1. Run the same 1.5 test build on both computers. Existing 1.4 peers cannot participate in the new handoff protocol.
+1. Run the same DisplayCue version (1.5 or later) on both computers. Existing 1.4 peers cannot participate in the new handoff protocol.
 2. Configure the paired computer address, ports, shared pairing key and private-network firewall access. Test the connection in both directions.
 3. In monitor-input settings on both computers, assign `left` and `right` Peer IDs to the same physical monitors. Use Identify while each PC owns the monitors to establish the mapping.
 

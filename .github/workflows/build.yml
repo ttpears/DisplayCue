@@ -22,7 +22,9 @@ jobs:
         run: dotnet run --project tests/DisplayCue.Tests.csproj -c Release -r win-x64
       - name: Archive standalone app
         shell: pwsh
-        run: Compress-Archive -Path artifacts/DisplayCue/* -DestinationPath artifacts/DisplayCue-win-x64.zip
+        run: |
+          Copy-Item docs/HOME-OFFICE-SETUP.md artifacts/DisplayCue/SETUP.md
+          Compress-Archive -Path artifacts/DisplayCue/* -DestinationPath artifacts/DisplayCue-win-x64.zip
       - name: Build Microsoft Store package
         shell: pwsh
         run: ./native/build-store-package.ps1
